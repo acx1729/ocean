@@ -12,15 +12,16 @@ make build   # Rust Loro shim + Go binary with the web app embedded → bin/kb
 
 ## 2. Postgres
 
-Any Postgres 16 with the `ltree` and `pg_trgm` extensions available. For example,
-with Docker:
+Any Postgres 16 with the `ltree` and `pg_trgm` extensions available. The
+quickest is the disposable dev cluster used by the tests:
 
 ```sh
-docker run -d --name kb-pg -e POSTGRES_USER=postgres -e POSTGRES_HOST_AUTH_METHOD=trust -p 55432:5432 postgres:16
+make dev-db                                   # 127.0.0.1:55432, superuser "postgres", no password
 psql -h 127.0.0.1 -p 55432 -U postgres -c "CREATE DATABASE kb;"
 ```
 
-Migrations run on start when `KB_MIGRATE=true`.
+(`scripts/dev-postgres.sh` uses a local Postgres 16 when installed, otherwise
+Docker.) Migrations run on start when `KB_MIGRATE=true`.
 
 ## 3. Run
 
@@ -60,12 +61,10 @@ Then open <http://127.0.0.1:8080/app/>.
 
 ## Tests
 
-```sh
-make test            # Go (needs the test Postgres; see internal/testutil)
-cd web && npm test   # sync client protocol tests, block tree, identity
-make e2e             # Playwright against bin/kb: sign-in, two-tab collaboration, invites
-```
+See [testing.md](testing.md) for the full local test matrix. In short:
 
-`make e2e` starts `bin/kb` on port 8787 with a fresh database on the local test
-cluster (`postgres://postgres@127.0.0.1:55432`); set `KB_E2E_ADMIN_DSN` to use
-another cluster or `KB_E2E_BASE_URL` to test a node you started yourself.
+```sh
+make lint && make dev-db && make test        # Go, with the race detector
+cd web && npm test                           # sync client protocol, block tree, identity
+make e2e                                     # Playwright against bin/kb
+```

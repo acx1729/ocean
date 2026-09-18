@@ -49,27 +49,27 @@ type S3 struct {
 // Limits are the request and document limits from specification section 12,
 // each overridable with a KB_LIMITS_* variable.
 type Limits struct {
-	BlockMarkdownBytes   int64
-	BlocksPerPage        int
-	PageDocBytes         int64
-	BatchOps             int
-	AssetBytes           int64
-	PropertiesPerBlock   int
-	BoundariesPerPage    int
-	ImportArchiveBytes   int64
-	RequestBodyBytes     int64
-	UpdateBytes          int64
-	OpenDocsPerConn      int
-	PushesPerSecond      int
-	SubscribersPerRoom   int
-	QueryTimeout         time.Duration
-	AdminQueryTimeout    time.Duration
-	QueryConcurrency     int
-	MCPResponseBytes     int64
-	RateAccessPerMinute  int
-	RateAgentPerMinute   int
-	RateChallengePerMin  int
-	SessionsPerUser      int
+	BlockMarkdownBytes  int64
+	BlocksPerPage       int
+	PageDocBytes        int64
+	BatchOps            int
+	AssetBytes          int64
+	PropertiesPerBlock  int
+	BoundariesPerPage   int
+	ImportArchiveBytes  int64
+	RequestBodyBytes    int64
+	UpdateBytes         int64
+	OpenDocsPerConn     int
+	PushesPerSecond     int
+	SubscribersPerRoom  int
+	QueryTimeout        time.Duration
+	AdminQueryTimeout   time.Duration
+	QueryConcurrency    int
+	MCPResponseBytes    int64
+	RateAccessPerMinute int
+	RateAgentPerMinute  int
+	RateChallengePerMin int
+	SessionsPerUser     int
 }
 
 // Config is the complete node configuration.

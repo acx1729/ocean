@@ -6,7 +6,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS := -X github.com/acx1729/ocean/internal/version.Version=$(VERSION) -X github.com/acx1729/ocean/internal/version.Commit=$(COMMIT)
 LORO_LIB := rust/loro-cabi/target/release/libloro_cabi.a
 
-.PHONY: all build loro proto lint test test-short web e2e docker dev-env clean tools
+.PHONY: all build loro proto lint test test-short web e2e docker dev-env dev-db dev-db-stop clean tools
 
 all: build
 
@@ -35,11 +35,18 @@ lint:
 	test -z "$$(gofmt -l cmd internal | tee /dev/stderr)"
 	go vet ./...
 
-## test: the full Go suite (needs Postgres; see KB_TEST_DATABASE_URL)
-test: loro
-	go test -race -count=1 ./...
+## dev-db: start a disposable Postgres 16 for tests and local runs (127.0.0.1:55432)
+dev-db:
+	scripts/dev-postgres.sh start
 
-## test-short: unit tests only
+dev-db-stop:
+	scripts/dev-postgres.sh stop
+
+## test: the full Go suite; database tests need Postgres (make dev-db) and fail if it is missing
+test: loro
+	KB_TEST_REQUIRE_DB=1 go test -race -count=1 ./...
+
+## test-short: unit tests only (database-backed tests skip when Postgres is absent)
 test-short: loro
 	go test -short -count=1 ./...
 
