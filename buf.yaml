@@ -1,0 +1,20 @@
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+  except:
+    - PACKAGE_VERSION_SUFFIX
+    - PACKAGE_DIRECTORY_MATCH
+    # Many services in one package share short method names (Get, Create, List),
+    # so request/response messages carry the resource name instead.
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+  ignore:
+    - proto/google
+breaking:
+  use:
+    - FILE
+  ignore:
+    - proto/google

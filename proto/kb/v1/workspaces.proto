@@ -1,0 +1,360 @@
+syntax = "proto3";
+
+package kb.v1;
+
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "kb/v1/common.proto";
+
+option go_package = "github.com/acx1729/ocean/gen/kb/v1;kbv1";
+
+service WorkspacesService {
+  rpc Create(CreateWorkspaceRequest) returns (CreateWorkspaceResponse);
+  rpc Get(GetWorkspaceRequest) returns (GetWorkspaceResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc List(ListWorkspacesRequest) returns (ListWorkspacesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Update(UpdateWorkspaceRequest) returns (UpdateWorkspaceResponse);
+  rpc RotateKey(RotateKeyRequest) returns (RotateKeyResponse);
+  rpc Export(ExportWorkspaceRequest) returns (ExportWorkspaceResponse);
+  // Admin only; 30-day trash.
+  rpc Delete(DeleteWorkspaceRequest) returns (DeleteWorkspaceResponse);
+}
+
+message CreateWorkspaceRequest {
+  string slug = 1;
+  string name = 2;
+}
+
+message CreateWorkspaceResponse {
+  Workspace workspace = 1;
+  // The default project created with the workspace.
+  Project project = 2;
+}
+
+message GetWorkspaceRequest {
+  string workspace_id = 1;
+}
+
+message GetWorkspaceResponse {
+  Workspace workspace = 1;
+}
+
+message ListWorkspacesRequest {
+  int32 page_size = 1;
+  string cursor = 2;
+}
+
+message ListWorkspacesResponse {
+  repeated Workspace workspaces = 1;
+  string next_cursor = 2;
+}
+
+message UpdateWorkspaceRequest {
+  string workspace_id = 1;
+  Workspace workspace = 2;
+  google.protobuf.FieldMask update_mask = 3;
+}
+
+message UpdateWorkspaceResponse {
+  Workspace workspace = 1;
+}
+
+message RotateKeyRequest {
+  string workspace_id = 1;
+}
+
+message RotateKeyResponse {
+  int32 key_version = 1;
+  string job_id = 2;
+}
+
+message ExportWorkspaceRequest {
+  string workspace_id = 1;
+  // X25519 public key the workspace key is wrapped to (HPKE).
+  bytes recipient_pubkey = 2;
+}
+
+message ExportWorkspaceResponse {
+  string job_id = 1;
+}
+
+message DeleteWorkspaceRequest {
+  string workspace_id = 1;
+}
+
+message DeleteWorkspaceResponse {
+  google.protobuf.Timestamp purge_after = 1;
+}
+
+service MembersService {
+  rpc Invite(InviteRequest) returns (InviteResponse);
+  rpc ListInvites(ListInvitesRequest) returns (ListInvitesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc RevokeInvite(RevokeInviteRequest) returns (RevokeInviteResponse);
+  rpc AcceptInvite(AcceptInviteRequest) returns (AcceptInviteResponse);
+  rpc List(ListMembersRequest) returns (ListMembersResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc UpdateRole(UpdateRoleRequest) returns (UpdateRoleResponse);
+  rpc Remove(RemoveMemberRequest) returns (RemoveMemberResponse);
+}
+
+message InviteRequest {
+  string workspace_id = 1;
+  // A DID or an EVM address (0x…), which is normalized to did:pkh.
+  string did = 2;
+  string role = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message InviteResponse {
+  Invite invite = 1;
+}
+
+message ListInvitesRequest {
+  string workspace_id = 1;
+  int32 page_size = 2;
+  string cursor = 3;
+}
+
+message ListInvitesResponse {
+  repeated Invite invites = 1;
+  string next_cursor = 2;
+}
+
+message RevokeInviteRequest {
+  string workspace_id = 1;
+  string invite_id = 2;
+}
+
+message RevokeInviteResponse {}
+
+message AcceptInviteRequest {
+  string workspace_id = 1;
+  string invite_id = 2;
+}
+
+message AcceptInviteResponse {
+  Membership membership = 1;
+}
+
+message ListMembersRequest {
+  string workspace_id = 1;
+  int32 page_size = 2;
+  string cursor = 3;
+}
+
+message ListMembersResponse {
+  repeated Member members = 1;
+  string next_cursor = 2;
+}
+
+message UpdateRoleRequest {
+  string workspace_id = 1;
+  string did = 2;
+  string role = 3;
+}
+
+message UpdateRoleResponse {
+  Member member = 1;
+}
+
+message RemoveMemberRequest {
+  string workspace_id = 1;
+  string did = 2;
+}
+
+message RemoveMemberResponse {}
+
+service GroupsService {
+  rpc Create(CreateGroupRequest) returns (CreateGroupResponse);
+  rpc AddMember(AddGroupMemberRequest) returns (AddGroupMemberResponse);
+  rpc RemoveMember(RemoveGroupMemberRequest) returns (RemoveGroupMemberResponse);
+  rpc List(ListGroupsRequest) returns (ListGroupsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Delete(DeleteGroupRequest) returns (DeleteGroupResponse);
+}
+
+message CreateGroupRequest {
+  string workspace_id = 1;
+  string name = 2;
+}
+
+message CreateGroupResponse {
+  Group group = 1;
+}
+
+message AddGroupMemberRequest {
+  string workspace_id = 1;
+  string group_id = 2;
+  string did = 3;
+}
+
+message AddGroupMemberResponse {
+  Group group = 1;
+}
+
+message RemoveGroupMemberRequest {
+  string workspace_id = 1;
+  string group_id = 2;
+  string did = 3;
+}
+
+message RemoveGroupMemberResponse {
+  Group group = 1;
+}
+
+message ListGroupsRequest {
+  string workspace_id = 1;
+  int32 page_size = 2;
+  string cursor = 3;
+}
+
+message ListGroupsResponse {
+  repeated Group groups = 1;
+  string next_cursor = 2;
+}
+
+message DeleteGroupRequest {
+  string workspace_id = 1;
+  string group_id = 2;
+}
+
+message DeleteGroupResponse {}
+
+service ShareLinksService {
+  rpc Create(CreateShareLinkRequest) returns (CreateShareLinkResponse);
+  rpc List(ListShareLinksRequest) returns (ListShareLinksResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Revoke(RevokeShareLinkRequest) returns (RevokeShareLinkResponse);
+  rpc Redeem(RedeemShareLinkRequest) returns (RedeemShareLinkResponse);
+}
+
+message CreateShareLinkRequest {
+  string workspace_id = 1;
+  ResourceType resource_type = 2;
+  string resource_id = 3;
+  string role = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  int32 max_uses = 6;
+  bool allow_anonymous = 7;
+}
+
+message CreateShareLinkResponse {
+  ShareLink link = 1;
+}
+
+message ListShareLinksRequest {
+  string workspace_id = 1;
+  int32 page_size = 2;
+  string cursor = 3;
+}
+
+message ListShareLinksResponse {
+  repeated ShareLink links = 1;
+  string next_cursor = 2;
+}
+
+message RevokeShareLinkRequest {
+  string workspace_id = 1;
+  string link_id = 2;
+}
+
+message RevokeShareLinkResponse {}
+
+message RedeemShareLinkRequest {
+  string token = 1;
+}
+
+message RedeemShareLinkResponse {
+  string workspace_id = 1;
+  ResourceType resource_type = 2;
+  string resource_id = 3;
+  string role = 4;
+  // Anonymous viewer session, when the link allows anonymous access and the caller has none.
+  string access_token = 5;
+  google.protobuf.Timestamp access_expires_at = 6;
+}
+
+service ProjectsService {
+  rpc Create(CreateProjectRequest) returns (CreateProjectResponse);
+  rpc Get(GetProjectRequest) returns (GetProjectResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc List(ListProjectsRequest) returns (ListProjectsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Update(UpdateProjectRequest) returns (UpdateProjectResponse);
+  rpc Archive(ArchiveProjectRequest) returns (ArchiveProjectResponse);
+  rpc Export(ExportProjectRequest) returns (ExportProjectResponse);
+}
+
+message CreateProjectRequest {
+  string workspace_id = 1;
+  string slug = 2;
+  string name = 3;
+  // KB in KB-123; defaults to the upper-cased slug prefix.
+  string key_prefix = 4;
+  google.protobuf.Struct settings = 5;
+}
+
+message CreateProjectResponse {
+  Project project = 1;
+}
+
+message GetProjectRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+}
+
+message GetProjectResponse {
+  Project project = 1;
+}
+
+message ListProjectsRequest {
+  string workspace_id = 1;
+  int32 page_size = 2;
+  string cursor = 3;
+  bool include_archived = 4;
+}
+
+message ListProjectsResponse {
+  repeated Project projects = 1;
+  string next_cursor = 2;
+}
+
+message UpdateProjectRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+  Project project = 3;
+  google.protobuf.FieldMask update_mask = 4;
+}
+
+message UpdateProjectResponse {
+  Project project = 1;
+}
+
+message ArchiveProjectRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+}
+
+message ArchiveProjectResponse {
+  Project project = 1;
+}
+
+message ExportProjectRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+}
+
+message ExportProjectResponse {
+  string job_id = 1;
+}

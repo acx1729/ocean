@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package kb.v1;
+
+import "google/protobuf/struct.proto";
+import "kb/v1/common.proto";
+
+option go_package = "github.com/acx1729/ocean/gen/kb/v1;kbv1";
+
+// CEL over the block projection, compiled to one parameterized SQL statement (section 8).
+service QueryService {
+  rpc Query(QueryRequest) returns (QueryResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Validate(ValidateRequest) returns (ValidateResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Explain(ExplainQueryRequest) returns (ExplainQueryResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+message QueryRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+  string cel = 3;
+  repeated OrderBy order_by = 4;
+  int32 page_size = 5;
+  string cursor = 6;
+  repeated Include include = 7;
+  WaitForSeq wait_for_seq = 8;
+  CountMode count_mode = 9;
+}
+
+message QueryStats {
+  int64 rows_scanned = 1;
+  int64 ms = 2;
+  int32 cost = 3;
+}
+
+message QueryResponse {
+  repeated Block blocks = 1;
+  string next_cursor = 2;
+  // Minimum indexed_seq across the docs of returned blocks.
+  int64 indexed_seq = 3;
+  QueryStats stats = 4;
+  Count count = 5;
+}
+
+message ValidateRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+  string cel = 3;
+}
+
+message ResolvedSymbols {
+  map<string, string> properties = 1;
+  map<string, string> types = 2;
+  map<string, string> relation_types = 3;
+}
+
+message ValidateResponse {
+  bool ok = 1;
+  repeated CelError errors = 2;
+  ResolvedSymbols resolved = 3;
+  int32 cost = 4;
+}
+
+message ExplainQueryRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+  string cel = 3;
+  repeated OrderBy order_by = 4;
+  // Evaluate the expression in-process against this block and report sub-expression values.
+  string block_id = 5;
+}
+
+message ExplainQueryResponse {
+  string sql = 1;
+  string plan = 2;
+  int32 cost = 3;
+  google.protobuf.Struct evaluation = 4;
+}

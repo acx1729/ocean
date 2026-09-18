@@ -1,0 +1,21 @@
+[package]
+name = "loro-cabi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "loro_cabi"
+crate-type = ["staticlib"]
+
+[dependencies]
+loro = "1.16"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+panic = "abort"
+strip = "debuginfo"

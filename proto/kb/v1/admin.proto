@@ -1,0 +1,141 @@
+syntax = "proto3";
+
+package kb.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "kb/v1/common.proto";
+
+option go_package = "github.com/acx1729/ocean/gen/kb/v1;kbv1";
+
+// Every operator action is an RPC; there is no command-line interface.
+// Authenticated with a node-operator token derived from the node key.
+service AdminService {
+  rpc Health(HealthRequest) returns (HealthResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Stats(StatsRequest) returns (StatsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Reindex(ReindexRequest) returns (ReindexResponse);
+  rpc Compact(CompactRequest) returns (CompactResponse);
+  rpc Verify(VerifyNodeRequest) returns (VerifyNodeResponse);
+  rpc RotateNodeKey(RotateNodeKeyRequest) returns (RotateNodeKeyResponse);
+  rpc ExportNodeKey(ExportNodeKeyRequest) returns (ExportNodeKeyResponse);
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc RetryJob(RetryJobRequest) returns (RetryJobResponse);
+}
+
+message HealthRequest {}
+
+message HealthCheck {
+  string name = 1;
+  bool ok = 2;
+  string detail = 3;
+  int64 latency_ms = 4;
+}
+
+message HealthResponse {
+  bool ok = 1;
+  string version = 2;
+  string role = 3;
+  string node_did = 4;
+  bool bootstrapped = 5;
+  repeated HealthCheck checks = 6;
+  int64 schema_version = 7;
+}
+
+message StatsRequest {
+  string workspace_id = 1;
+}
+
+message StatsResponse {
+  int64 workspaces = 1;
+  int64 docs = 2;
+  int64 blocks = 3;
+  int64 updates = 4;
+  int64 outbox_lag_ms = 5;
+  int64 index_lag_ms = 6;
+  int64 compaction_backlog = 7;
+  int64 rooms = 8;
+  int64 connections = 9;
+  google.protobuf.Struct detail = 10;
+}
+
+message ReindexRequest {
+  // Empty means every workspace.
+  string workspace_id = 1;
+  string doc_id = 2;
+}
+
+message ReindexResponse {
+  string job_id = 1;
+  int64 docs_enqueued = 2;
+}
+
+message CompactRequest {
+  string workspace_id = 1;
+  string doc_id = 2;
+}
+
+message CompactResponse {
+  string job_id = 1;
+  int64 docs_enqueued = 2;
+}
+
+message VerifyNodeRequest {
+  string workspace_id = 1;
+  int32 sample_size = 2;
+}
+
+message VerifyFinding {
+  string check = 1;
+  bool ok = 2;
+  string detail = 3;
+}
+
+message VerifyNodeResponse {
+  bool ok = 1;
+  repeated VerifyFinding findings = 2;
+  bool node_key_exported = 3;
+}
+
+message RotateNodeKeyRequest {}
+
+message RotateNodeKeyResponse {
+  string node_did = 1;
+  int64 workspaces_rewrapped = 2;
+}
+
+message ExportNodeKeyRequest {
+  // Passphrase the sealed copy is protected with.
+  string passphrase = 1;
+}
+
+message ExportNodeKeyResponse {
+  bytes sealed = 1;
+  string node_did = 2;
+  google.protobuf.Timestamp exported_at = 3;
+}
+
+message ListJobsRequest {
+  string kind = 1;
+  string state = 2;
+  int32 page_size = 3;
+  string cursor = 4;
+}
+
+message ListJobsResponse {
+  repeated Job jobs = 1;
+  string next_cursor = 2;
+}
+
+message RetryJobRequest {
+  string job_id = 1;
+}
+
+message RetryJobResponse {
+  Job job = 1;
+}

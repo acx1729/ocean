@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package kb.v1;
+
+import "google/protobuf/timestamp.proto";
+import "kb/v1/common.proto";
+
+option go_package = "github.com/acx1729/ocean/gen/kb/v1;kbv1";
+
+service EventsService {
+  rpc Subscribe(SubscribeEventsRequest) returns (stream Event);
+  rpc ListAudit(ListAuditRequest) returns (ListAuditResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc VerifyAudit(VerifyAuditRequest) returns (VerifyAuditResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+message SubscribeEventsRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+  repeated string kinds = 3;
+  // Replay from the outbox for up to 7 days.
+  string since_cursor = 4;
+}
+
+message ListAuditRequest {
+  string workspace_id = 1;
+  int32 page_size = 2;
+  string cursor = 3;
+  string principal = 4;
+  string action = 5;
+  string resource_id = 6;
+  google.protobuf.Timestamp since = 7;
+  google.protobuf.Timestamp until = 8;
+}
+
+message ListAuditResponse {
+  repeated AuditEntry entries = 1;
+  string next_cursor = 2;
+}
+
+message VerifyAuditRequest {
+  string workspace_id = 1;
+}
+
+message VerifyAuditResponse {
+  bool ok = 1;
+  int64 entries = 2;
+  // First broken link, when any.
+  int64 broken_at_id = 3;
+}

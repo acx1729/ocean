@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package kb.v1;
+
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+import "kb/v1/common.proto";
+
+option go_package = "github.com/acx1729/ocean/gen/kb/v1;kbv1";
+
+service PublicationsService {
+  rpc Create(CreatePublicationRequest) returns (CreatePublicationResponse);
+  rpc Get(GetPublicationRequest) returns (GetPublicationResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc List(ListPublicationsRequest) returns (ListPublicationsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Update(UpdatePublicationRequest) returns (UpdatePublicationResponse);
+  rpc Revoke(RevokePublicationRequest) returns (RevokePublicationResponse);
+}
+
+message CreatePublicationRequest {
+  string workspace_id = 1;
+  string page_id = 2;
+  // Defaults to a normalized title.
+  string slug = 3;
+  PublicationMode mode = 4;
+  bool include_children = 5;
+  google.protobuf.Timestamp expires_at = 6;
+}
+
+message CreatePublicationResponse {
+  Publication publication = 1;
+}
+
+message GetPublicationRequest {
+  string workspace_id = 1;
+  oneof ref {
+    string publication_id = 2;
+    string page_id = 3;
+  }
+}
+
+message GetPublicationResponse {
+  Publication publication = 1;
+}
+
+message ListPublicationsRequest {
+  string workspace_id = 1;
+  int32 page_size = 2;
+  string cursor = 3;
+  bool include_revoked = 4;
+}
+
+message ListPublicationsResponse {
+  repeated Publication publications = 1;
+  string next_cursor = 2;
+}
+
+message UpdatePublicationRequest {
+  string workspace_id = 1;
+  string publication_id = 2;
+  Publication publication = 3;
+  google.protobuf.FieldMask update_mask = 4;
+}
+
+message UpdatePublicationResponse {
+  Publication publication = 1;
+}
+
+message RevokePublicationRequest {
+  string workspace_id = 1;
+  string publication_id = 2;
+}
+
+message RevokePublicationResponse {}

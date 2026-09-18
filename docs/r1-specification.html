@@ -1,0 +1,2991 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>R1 Specification: Self-Hosted Knowledge Platform</title>
+<style>
+:root{--fg:#1d1d1b;--muted:#5f5e5a;--line:#d9d7cf;--bg:#fff;--code:#f3f2ec;--accent:#0f6e56;}
+@media (prefers-color-scheme: dark){:root{--fg:#e7e6e0;--muted:#a9a89f;--line:#3a3a37;--bg:#141413;--code:#1f1f1d;--accent:#5dcaa5;}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.wrap{display:grid;grid-template-columns:260px minmax(0,1fr);gap:40px;max-width:1280px;margin:0 auto;padding:32px 24px}
+nav.toc{position:sticky;top:24px;align-self:start;max-height:calc(100vh - 48px);overflow:auto;font-size:13.5px;border-right:1px solid var(--line);padding-right:16px}
+nav.toc ul{list-style:none;padding-left:0;margin:0}
+nav.toc li{margin:4px 0}
+nav.toc a{color:var(--muted);text-decoration:none}
+nav.toc a:hover{color:var(--accent)}
+main{min-width:0}
+h1{font-size:30px;line-height:1.2;margin:0 0 4px;font-weight:600}
+h2{font-size:22px;margin:48px 0 12px;padding-top:12px;border-top:1px solid var(--line);font-weight:600}
+h3{font-size:17px;margin:28px 0 8px;font-weight:600}
+p{margin:10px 0}
+.byline{color:var(--muted);margin-bottom:24px}
+table{border-collapse:collapse;width:100%;margin:12px 0 18px;font-size:14px;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:6px 10px;vertical-align:top;text-align:left}
+th{background:var(--code);font-weight:600}
+code{font:0.92em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{background:var(--code);padding:14px 16px;border-radius:8px;overflow-x:auto;font-size:13px;line-height:1.5}
+pre code{background:none;padding:0}
+pre.mermaid{background:transparent;text-align:center}
+ul,ol{padding-left:24px}
+li{margin:4px 0}
+@media (max-width:900px){.wrap{grid-template-columns:1fr}nav.toc{position:static;border-right:0;max-height:none}}
+@media print{nav.toc{display:none}.wrap{display:block;max-width:none}h2{break-before:page}pre{white-space:pre-wrap}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+<p><strong>Contents</strong></p>
+<div class="toc">
+<ul>
+<li><a href="#1-scope-and-definitions">1. Scope and definitions</a></li>
+<li><a href="#2-architecture-and-deployment-profiles">2. Architecture and deployment profiles</a></li>
+<li><a href="#3-data-model">3. Data model</a></li>
+<li><a href="#4-identity-and-authentication">4. Identity and authentication</a></li>
+<li><a href="#5-encryption-and-key-management">5. Encryption and key management</a></li>
+<li><a href="#6-authorization">6. Authorization</a></li>
+<li><a href="#7-write-path-sync-projections-and-events">7. Write path, sync, projections and events</a></li>
+<li><a href="#8-query-engine-cel">8. Query engine (CEL)</a></li>
+<li><a href="#9-markdown-and-mdx-import-and-export-publishing">9. Markdown and MDX, import and export, publishing</a></li>
+<li><a href="#10-mcp">10. MCP</a></li>
+<li><a href="#11-minimal-web-app">11. Minimal web app</a></li>
+<li><a href="#12-api-reference">12. API reference</a></li>
+<li><a href="#13-operations">13. Operations</a></li>
+<li><a href="#14-testing-build-plan-open-decisions">14. Testing, build plan, open decisions</a></li>
+</ul>
+</div>
+
+</nav>
+<main>
+<h1 id="r1-specification-self-hosted-knowledge-platform">R1 Specification: Self-Hosted Knowledge Platform</h1>
+<p>2026-09-17</p>
+<h2 id="1-scope-and-definitions">1. Scope and definitions</h2>
+<p>R1 is a self-hosted release: one Go binary with PostgreSQL, NATS and an in-process OpenFGA, exposing pages, blocks, permissions, publishing, CEL search and MCP through an API, plus a minimal web app for live collaboration. The desktop release (R2) is the same binary packaged with Electron; nothing in R1 is desktop-specific. Every capability is reachable through the API; the web app is one client of it.</p>
+<h3 id="goals">Goals</h3>
+<ul>
+<li>Create, edit, move and version pages and blocks through structured APIs; callers never handle CRDT bytes.</li>
+<li>One primitive, one store, three surfaces: the block is the primitive; Postgres holds everything durable except bytes and an S3 endpoint holds assets, cold snapshots and backups; the surfaces are Documents, Work (both R1) and Canvas (R2).</li>
+<li>Ship a minimal web app for live collaboration: sign in, open pages, edit blocks together with live cursors, keep working offline, reconnect and converge; sized for 10 concurrent users across 20 docs with several editors per doc.</li>
+<li>Share a workspace by DID; roles come from a compiled permission scheme; any block can become a permission boundary.</li>
+<li>Publish pages to public URLs; every block has a permanent URI; work items carry project keys such as <code>KB-123</code>.</li>
+<li>Query blocks with Google CEL; rank full-text search.</li>
+<li>Import and export Markdown and MDX with byte-exact round-trip of anything the parser does not model.</li>
+<li>Expose MCP with OAuth 2.1 and scoped agent tokens that act under a user's permissions.</li>
+<li>Encrypt every workspace's history and assets at rest with one key per workspace, held by the node; every object in object storage is ciphertext produced by the node.</li>
+<li>Run on Docker Compose for teams up to 500 users and on Kubernetes for 10K users and 600K blocks.</li>
+<li>Keep the user in control of the data: open formats only (Markdown, mdast JSON, Loro's open update format), full export of any workspace at any time, self-host as the default deployment, no proprietary lock-in.</li>
+</ul>
+<h3 id="non-goals-r2-and-later">Non-goals (R2 and later)</h3>
+<p>Electron desktop app (R2); the Canvas surface (whiteboards, R2); WYSIWYG rich-text marks and a formatting toolbar (R2; R1 edits Markdown source per block); views, boards and kanban UI; workflows, FSM and governed attribute writes; automations (ECA); comments; folder and git sync; MDX component rendering; spaced repetition; org-mode import; webhooks; node federation; custom domains. Each is designed for in this spec so it lands without breaking R1 clients. Client-held workspace keys are not a later phase at all: a node that cannot read a workspace cannot search it, query it or serve agents, so that is a different product (section 5). Logseq and Obsidian are import and export targets, not the product model: the platform is inspired by them and built clean, open source, with the user owning the data.</p>
+<h3 id="definitions">Definitions</h3>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning in R1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Node</td>
+<td>One running instance of the binary plus its Postgres, NATS and FGA store. The trust boundary: plaintext exists only inside a node holding the workspace key.</td>
+</tr>
+<tr>
+<td>Workspace</td>
+<td>Tenant. Owns the key ring, members, projects. Shard key on every table.</td>
+</tr>
+<tr>
+<td>Project</td>
+<td>Configuration boundary inside a workspace: types, properties, relation types, scheme bindings, the work-key counter.</td>
+</tr>
+<tr>
+<td>Principal</td>
+<td>A DID that can hold a permission: user (wallet or local key), device, agent token, share link, node.</td>
+</tr>
+<tr>
+<td>Doc</td>
+<td>One CRDT log with snapshots. The unit of sync, history, encryption and permission.</td>
+</tr>
+<tr>
+<td>Page</td>
+<td>A block whose type owns a doc; <code>page</code> is the reserved doc-owning type. Journals are pages with <code>journal_date</code>.</td>
+</tr>
+<tr>
+<td>Block</td>
+<td>The universal node: id, tree position, Markdown content, property bag, type pointer.</td>
+</tr>
+<tr>
+<td>Work item</td>
+<td>A block whose type extends the shipped base type <code>work</code>; owns a doc; keyed <code>KB-123</code> from the project counter. <code>task</code>, <code>bug</code>, <code>feature</code>, <code>epic</code> are shipped subtypes, all data.</td>
+</tr>
+<tr>
+<td>Surface</td>
+<td>A navigation entry over the same blocks: Documents (pages), Work (<code>is_a('work')</code>), Canvas (R2).</td>
+</tr>
+<tr>
+<td>Boundary</td>
+<td>A block whose subtree was split into its own doc so it can carry its own grants.</td>
+</tr>
+<tr>
+<td>Edge</td>
+<td>Directed relation between two blocks: inline <code>ref</code>, <code>tag</code>, <code>embed</code>, or a relation property.</td>
+</tr>
+<tr>
+<td>Type</td>
+<td>User-defined behavior for a block: required and allowed properties, defaults, collection capability, <code>owns_doc</code>, <code>numbered</code>. Reserved: <code>page</code>, <code>view</code>.</td>
+</tr>
+<tr>
+<td>Scheme</td>
+<td>Workspace-level JSON defining roles, permissions, conditions; compiled to an OpenFGA model.</td>
+</tr>
+<tr>
+<td>Publication</td>
+<td>A page exposed at a public URL, live or pinned to a <code>seq</code>.</td>
+</tr>
+<tr>
+<td>Agent token</td>
+<td>A scoped principal owned by a user; every check runs as the agent and as the owner.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="acceptance-criteria">Acceptance criteria</h3>
+<table>
+<thead>
+<tr>
+<th>Criterion</th>
+<th>Target</th>
+<th>Measured how</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compose, 4 vCPU / 8 GB</td>
+<td>50 concurrent users, p95 write &lt; 50 ms, p95 query &lt; 100 ms</td>
+<td>k6 load suite in CI</td>
+</tr>
+<tr>
+<td>Kubernetes reference sizing</td>
+<td>1K concurrent of 10K users, 600K blocks, 200 qps, p95 query &lt; 100 ms</td>
+<td>k6 against the Helm reference values</td>
+</tr>
+<tr>
+<td>Ingest</td>
+<td>5K block updates/s sustained on one Postgres primary</td>
+<td>k6 write suite</td>
+</tr>
+<tr>
+<td>Collaboration</td>
+<td>10 concurrent users across 20 docs, 3+ editors per doc; remote keystroke visible p95 &lt; 200 ms on LAN and &lt; 500 ms over WAN; convergence after 5 min offline; zero lost updates</td>
+<td>Playwright collaboration suite</td>
+</tr>
+<tr>
+<td>Web app</td>
+<td>≤ 300 KB gzipped initial JS; a 2,000-block page opens in &lt; 200 ms after first load</td>
+<td>bundle budget check + Playwright timing</td>
+</tr>
+<tr>
+<td>Import</td>
+<td>10K-file Markdown vault in under 10 min with a fidelity report</td>
+<td>importer benchmark</td>
+</tr>
+<tr>
+<td>Round-trip</td>
+<td>parse → serialize → parse is identity on CommonMark 0.31, GFM and MDX suites</td>
+<td>conformance suite in CI</td>
+</tr>
+<tr>
+<td>Durability</td>
+<td>RPO 5 min (WAL archiving), RTO 30 min (documented restore drill)</td>
+<td>quarterly drill</td>
+</tr>
+<tr>
+<td>Isolation</td>
+<td>zero cross-workspace reads in the isolation test suite</td>
+<td>RLS + integration tests</td>
+</tr>
+</tbody>
+</table>
+<h2 id="2-architecture-and-deployment-profiles">2. Architecture and deployment profiles</h2>
+<p>One statically linked Go server binary contains every service and has no command-line interface: <code>KB_ROLE</code> selects which services a process runs, migrations apply themselves at startup, and every operator action is an <code>AdminService</code> RPC. The minimal web app is embedded in the same binary and served at <code>/app</code>. Self-host on Compose runs one container with <code>KB_ROLE=all</code>; Kubernetes runs the same image as <code>api</code>, <code>sync</code> and <code>worker</code> Deployments; the R2 desktop app runs the same binary as an Electron sidecar with embedded NATS and FGA and a bundled Postgres.</p>
+<h3 id="components">Components</h3>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th><code>KB_ROLE</code></th>
+<th>State</th>
+<th>Scales by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>API</td>
+<td><code>api</code></td>
+<td>none</td>
+<td>CPU / RPS</td>
+</tr>
+<tr>
+<td>Sync rooms</td>
+<td><code>sync</code></td>
+<td>in-memory doc tails, rebuilt from the log</td>
+<td>WebSocket connections (10–20K per pod)</td>
+</tr>
+<tr>
+<td>Web app</td>
+<td>static assets served by <code>api</code> at <code>/app</code></td>
+<td>none on the server; the browser keeps Loro docs in an encrypted IndexedDB store</td>
+<td>CDN optional</td>
+</tr>
+<tr>
+<td>Workers</td>
+<td><code>worker</code></td>
+<td>none; jobs in Postgres (River)</td>
+<td>queue depth</td>
+</tr>
+<tr>
+<td>Materializer</td>
+<td>inside <code>api</code> and <code>worker</code></td>
+<td>warm decrypted docs, LRU</td>
+<td>with its host</td>
+</tr>
+<tr>
+<td>MCP server + OAuth AS</td>
+<td>inside <code>api</code></td>
+<td>none</td>
+<td>with API</td>
+</tr>
+<tr>
+<td>OpenFGA</td>
+<td>library, in every process</td>
+<td>shared <code>fga</code> database</td>
+<td>cache hit rate</td>
+</tr>
+<tr>
+<td>NATS</td>
+<td>external (Compose/k8s) or embedded (desktop, R2)</td>
+<td>none needed for the hot path</td>
+<td>3-node cluster</td>
+</tr>
+<tr>
+<td>PostgreSQL 16</td>
+<td>external</td>
+<td>everything durable except bytes</td>
+<td>vertical, then replicas, then workspace sharding</td>
+</tr>
+<tr>
+<td>Object storage</td>
+<td>S3 API contract: SeaweedFS bundled (Apache 2.0); Ceph RGW via Rook or external S3 in production; the node talks aws-sdk-go-v2</td>
+<td>assets, cold snapshots, exports, backups, all ciphertext</td>
+<td>provider</td>
+</tr>
+<tr>
+<td>Key custody</td>
+<td>sealed file with passphrase (Compose); Secret or cloud KMS (k8s); OS keychain (desktop, R2)</td>
+<td>node private key, the only long-lived secret</td>
+<td>n/a</td>
+</tr>
+</tbody>
+</table>
+<pre class="mermaid">flowchart LR
+  C[API clients&lt;br/&gt;REST, gRPC, MCP] --&gt; API[api]
+  W[Web app&lt;br/&gt;Loro doc per page] --&gt; API
+  W --&gt; SYNC[sync rooms&lt;br/&gt;WebSocket]
+  API --&gt; PG[(PostgreSQL)]
+  SYNC --&gt; PG
+  API --&gt; NATS[NATS]
+  SYNC --&gt; NATS
+  PG --&gt; WK[worker: indexer,&lt;br/&gt;compactor, jobs]
+  WK --&gt; PG
+  WK --&gt; NATS
+  API --&gt; S3[(object storage)]
+</pre>
+<p>Reading: every write lands in Postgres before anything is acknowledged; NATS carries events and room membership, never the document hot path.</p>
+<h3 id="profiles">Profiles</h3>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Compose (<code>KB_ROLE=all</code>)</th>
+<th>Kubernetes</th>
+<th>Desktop (R2)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Processes</td>
+<td>1 container</td>
+<td><code>api</code>, <code>sync</code>, <code>worker</code> Deployments</td>
+<td>1 sidecar process</td>
+</tr>
+<tr>
+<td>Postgres</td>
+<td><code>postgres:16</code> container</td>
+<td>CloudNativePG or external</td>
+<td>bundled binaries, child process</td>
+</tr>
+<tr>
+<td>NATS</td>
+<td><code>nats:2</code> container</td>
+<td>3-replica StatefulSet</td>
+<td>embedded <code>nats-server</code> library</td>
+</tr>
+<tr>
+<td>OpenFGA datastore</td>
+<td><code>fga</code> database in the same Postgres</td>
+<td>same</td>
+<td>same</td>
+</tr>
+<tr>
+<td>Object storage</td>
+<td>SeaweedFS container (<code>weed server -s3</code>)</td>
+<td>SeaweedFS chart, Ceph RGW via Rook, or external S3</td>
+<td>filesystem backend of the same <code>ObjectStore</code> interface, no S3 server</td>
+</tr>
+<tr>
+<td>Node key</td>
+<td>sealed file, unsealed by passphrase at start</td>
+<td>Secret, or a cloud KMS key that unwraps the sealed file at start</td>
+<td>OS keychain</td>
+</tr>
+<tr>
+<td>Transport</td>
+<td>HTTPS on one port, HTTP and WebSocket</td>
+<td>Ingress with WebSocket support; sticky sessions not required</td>
+<td>localhost HTTP with a per-install token</td>
+</tr>
+<tr>
+<td>Config</td>
+<td>env vars</td>
+<td>Helm values → ConfigMap + Secret</td>
+<td>generated env</td>
+</tr>
+<tr>
+<td>Upgrades</td>
+<td>pull image, restart; migrations run at startup</td>
+<td>Helm upgrade; the first pod to take the migration lock migrates</td>
+<td>in-app; dump-restore on a Postgres major bump</td>
+</tr>
+</tbody>
+</table>
+<h3 id="desktop-packaging-r2-design-fixed-now">Desktop packaging (R2, design fixed now)</h3>
+<p>Electron spawns exactly one child, the server binary; the binary owns Postgres (initdb on first run, health checks, graceful stop, crash restart). Postgres binaries ship inside the app for macOS (arm64, x64), Windows (x64) and Linux (x64, arm64), signed and notarized with the app. Postgres runs with <code>shared_buffers=128MB</code>, <code>max_connections=20</code>, <code>fsync=on</code>, listening on a Unix socket only; on Windows it listens on <code>127.0.0.1</code> with a per-install bearer token stored at <code>0600</code>. Data lives in the platform app-data directory as <code>pgdata/&lt;pg_major&gt;/</code>; a major bump triggers dump-and-restore of truth tables and a projection rebuild. The Electron renderer holds a local Loro doc per open page, so editing works offline and the sync RPCs reconcile with the node when online.</p>
+<h3 id="request-lifecycle-structured-write">Request lifecycle (structured write)</h3>
+<pre class="mermaid">sequenceDiagram
+  participant Client
+  participant API
+  participant FGA
+  participant Mat as Materializer
+  participant PG as Postgres
+  participant NATS
+  Client-&gt;&gt;API: BlocksService.Update (Idempotency-Key, if_version)
+  API-&gt;&gt;FGA: Check(agent) and Check(owner)
+  API-&gt;&gt;Mat: apply mutation to live doc (advisory lock on page)
+  Mat-&gt;&gt;PG: INSERT doc_updates + outbox, bump current_seq, COMMIT
+  PG--&gt;&gt;API: seq
+  API-&gt;&gt;NATS: publish event (after commit)
+  API--&gt;&gt;Client: version=seq, indexed_seq
+</pre>
+<p>Reading: the acknowledgement carries the committed <code>seq</code>; projections catch up asynchronously and report <code>indexed_seq</code>.</p>
+<h2 id="3-data-model">3. Data model</h2>
+<p>Truth is one append-only CRDT log per doc; every other table is a projection that <code>AdminService.Reindex</code> can rebuild from the logs. The schema below is the complete R1 schema; River and OpenFGA manage their own tables in the <code>river</code> and <code>fga</code> databases.</p>
+<h3 id="invariants">Invariants</h3>
+<ol>
+<li>The doc log is the only source of truth for content. Blocks, edges, properties, search and access tables are projections.</li>
+<li>A write is acknowledged only after its <code>doc_updates</code> row commits; the ack carries the DB-assigned <code>seq</code>.</li>
+<li>Updates are immutable. Undo, restore, moves and API writes append; nothing edits the log.</li>
+<li>Updates commute; <code>seq</code> exists for cursors, gaps and history, not for merge order.</li>
+<li>Block IDs are UUIDv7, assigned once, permanent across moves, boundaries and restores.</li>
+<li><code>workspace_id</code> is the first column of every primary key and index; there are no cross-workspace joins.</li>
+<li>Everything above the <code>KeyRing</code> is plaintext. Rooms, the materializer, the indexer and the compactor decrypt and encrypt at the node edge; search, CEL, the Work surface and MCP run on plaintext projections and never touch ciphertext. Nothing outside the node ever holds a workspace key.</li>
+<li>A permission boundary is a doc boundary. Blocks inherit access from their doc; docs inherit from their parent doc unless the FGA <code>parent</code> tuple is absent.</li>
+</ol>
+<h3 id="crdt-document-layout-loro">CRDT document layout (Loro)</h3>
+<table>
+<thead>
+<tr>
+<th>Container</th>
+<th>Loro type</th>
+<th>Content</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>meta</code></td>
+<td><code>LoroMap</code></td>
+<td><code>title</code>, <code>icon</code>, <code>format</code> (<code>markdown</code> or <code>outliner</code>), <code>journal_date</code>, <code>type_id</code>, <code>props: LoroMap</code> (the page block's bag)</td>
+</tr>
+<tr>
+<td><code>blocks</code></td>
+<td><code>LoroTree</code>, fractional index enabled</td>
+<td>one node per block; node data is a <code>LoroMap</code> with <code>type_id</code>, <code>props: LoroMap</code>, <code>content: LoroText</code> holding the block's Markdown source, <code>portal_doc_id</code> (boundaries), <code>created_at</code>, <code>created_by</code></td>
+</tr>
+<tr>
+<td>root</td>
+<td>tree root node</td>
+<td>the doc's root block</td>
+</tr>
+</tbody>
+</table>
+<p>A move is <code>tree.move(node, parent, index)</code>, a native Loro operation: concurrent moves converge, cycles are impossible by construction, and sibling order is kept by Loro's fractional index, so the application carries no tree-repair logic. Property keys are property-definition IDs, never names. Multi-valued relation properties are a <code>LoroMap&lt;target_id, true&gt;</code> so concurrent adds merge. Snapshots use Loro's snapshot export; compaction uses shallow snapshots to bound history; sync exchanges updates by version vector. Go reaches Loro through its C FFI with CGO in <code>api</code> and <code>worker</code>; a wazero-hosted WASM build is the fallback wherever CGO is undesirable.</p>
+<h3 id="ddl">DDL</h3>
+<pre><code class="language-sql">CREATE EXTENSION IF NOT EXISTS ltree;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- Tenancy -------------------------------------------------------------------
+CREATE TABLE workspaces (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  slug                TEXT NOT NULL UNIQUE CHECK (slug ~ '^[a-z0-9][a-z0-9-]{1,62}$'),
+  name                TEXT NOT NULL,
+  -- one key per workspace; the node is the only recipient (section 5)
+  current_key_version INT  NOT NULL DEFAULT 1,
+  fga_store_id        TEXT NOT NULL,
+  fga_model_id        TEXT NOT NULL,
+  scheme_version      INT  NOT NULL DEFAULT 1,
+  settings            JSONB NOT NULL DEFAULT '{}',
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at          TIMESTAMPTZ
+);
+
+CREATE TABLE projects (
+  workspace_id  UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  id            UUID NOT NULL DEFAULT gen_random_uuid(),
+  slug          TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  root_page_id  UUID,
+  settings      JSONB NOT NULL DEFAULT '{}',
+  archived_at   TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (workspace_id, id),
+  UNIQUE (workspace_id, slug)
+);
+
+-- Principals ----------------------------------------------------------------
+CREATE TABLE principals (
+  id                TEXT PRIMARY KEY,                 -- DID
+  kind              TEXT NOT NULL CHECK (kind IN ('user','device','agent','link','automation','node')),
+  owner_id          TEXT REFERENCES principals(id),   -- device, agent, link -&gt; user
+  display_name      TEXT,
+  signing_pubkey    BYTEA,
+  encryption_pubkey BYTEA,
+  attestation       BYTEA,                            -- owner's signature over the two keys
+  disabled_at       TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE workspace_members (
+  workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  principal_id TEXT NOT NULL REFERENCES principals(id),
+  role         TEXT NOT NULL,                         -- a role name from the workspace scheme
+  invited_by   TEXT,
+  joined_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (workspace_id, principal_id)
+);
+
+CREATE TABLE invites (
+  workspace_id UUID NOT NULL, id UUID NOT NULL DEFAULT gen_random_uuid(),
+  did TEXT NOT NULL, role TEXT NOT NULL, created_by TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL, accepted_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ,
+  PRIMARY KEY (workspace_id, id)
+);
+
+CREATE TABLE share_links (
+  workspace_id UUID NOT NULL, id UUID NOT NULL DEFAULT gen_random_uuid(),
+  resource_type TEXT NOT NULL CHECK (resource_type IN ('workspace','project','doc')),
+  resource_id  TEXT NOT NULL, role TEXT NOT NULL,
+  token_hash   BYTEA NOT NULL UNIQUE, expires_at TIMESTAMPTZ, max_uses INT, uses INT NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL, revoked_at TIMESTAMPTZ,
+  PRIMARY KEY (workspace_id, id)
+);
+
+CREATE TABLE sessions (
+  id UUID PRIMARY KEY, principal_id TEXT NOT NULL REFERENCES principals(id),
+  device_id TEXT, refresh_hash BYTEA NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL, last_seen_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE agent_tokens (
+  workspace_id UUID NOT NULL, id UUID NOT NULL DEFAULT gen_random_uuid(),
+  principal_id TEXT NOT NULL REFERENCES principals(id),   -- kind = agent
+  owner_id     TEXT NOT NULL REFERENCES principals(id),
+  name TEXT NOT NULL, token_hash BYTEA NOT NULL UNIQUE,
+  scopes JSONB NOT NULL, tools TEXT[] NOT NULL DEFAULT '{}',
+  expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ,
+  PRIMARY KEY (workspace_id, id)
+);
+
+-- Keys ------------------------------------------------------------------------
+CREATE TABLE workspace_keys (
+  workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  key_version  INT  NOT NULL,
+  recipient_id TEXT NOT NULL REFERENCES principals(id),   -- always the node
+  wrapped_key  BYTEA NOT NULL,                            -- HPKE to recipient's X25519 key
+  wrapped_by   TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (workspace_id, key_version, recipient_id)
+);
+
+-- Truth -----------------------------------------------------------------------
+CREATE TABLE docs (
+  workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  id              UUID NOT NULL,
+  project_id      UUID NOT NULL,
+  kind            TEXT NOT NULL CHECK (kind IN ('page','boundary')),
+  page_id         UUID NOT NULL,          -- self for kind = page
+  parent_doc_id   UUID,                   -- enclosing doc for boundaries
+  portal_block_id UUID,                   -- block in the parent doc that stands for this boundary
+  key_version     INT  NOT NULL,
+  current_seq     BIGINT NOT NULL DEFAULT 0,
+  snapshot_seq    BIGINT NOT NULL DEFAULT 0,
+  indexed_seq     BIGINT NOT NULL DEFAULT 0,
+  deleted_at      TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (workspace_id, id),
+  FOREIGN KEY (workspace_id, project_id) REFERENCES projects(workspace_id, id)
+);
+CREATE INDEX docs_page ON docs (workspace_id, page_id);
+
+CREATE TABLE doc_updates (
+  workspace_id UUID NOT NULL, doc_id UUID NOT NULL, seq BIGINT NOT NULL,
+  actor_id     TEXT NOT NULL, client_id TEXT NOT NULL, client_seq BIGINT NOT NULL,
+  key_version  INT NOT NULL, ciphertext BYTEA NOT NULL, size INT NOT NULL, quarantined_at TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (workspace_id, doc_id, seq),
+  UNIQUE (workspace_id, doc_id, client_id, client_seq),          -- idempotent retries
+  FOREIGN KEY (workspace_id, doc_id) REFERENCES docs(workspace_id, id) ON DELETE CASCADE
+);
+
+CREATE TABLE doc_snapshots (
+  workspace_id UUID NOT NULL, doc_id UUID NOT NULL, seq BIGINT NOT NULL,
+  key_version  INT NOT NULL, ciphertext BYTEA NOT NULL, state_vector BYTEA NOT NULL,
+  named        TEXT,                                              -- user-named version, kept past retention
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (workspace_id, doc_id, seq),
+  FOREIGN KEY (workspace_id, doc_id) REFERENCES docs(workspace_id, id) ON DELETE CASCADE
+);
+
+CREATE TABLE outbox (
+  id BIGSERIAL PRIMARY KEY,
+  workspace_id UUID NOT NULL, project_id UUID, doc_id UUID, seq BIGINT,
+  kind TEXT NOT NULL, payload JSONB NOT NULL, actor_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), published_at TIMESTAMPTZ
+);
+CREATE INDEX outbox_unpublished ON outbox (id) WHERE published_at IS NULL;
+
+-- Schema (user-defined types) --------------------------------------------------
+CREATE TABLE property_definitions (
+  workspace_id UUID NOT NULL, id UUID NOT NULL DEFAULT gen_random_uuid(),
+  project_id   UUID,                                    -- NULL = workspace-wide
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('text','number','date','select','multi_select','relation','user','checkbox','url')),
+  config JSONB NOT NULL DEFAULT '{}',                   -- options, relation_type_id, reflect_relation
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (workspace_id, id),
+  UNIQUE (workspace_id, project_id, name)
+);
+
+CREATE TABLE block_types (
+  workspace_id UUID NOT NULL, id UUID NOT NULL DEFAULT gen_random_uuid(), project_id UUID NOT NULL,
+  name TEXT NOT NULL, extends_type_id UUID, collection_capable BOOLEAN NOT NULL DEFAULT false, owns_doc BOOLEAN NOT NULL DEFAULT false, numbered BOOLEAN NOT NULL DEFAULT false,
+  required_props UUID[] NOT NULL DEFAULT '{}', allowed_props UUID[],   -- NULL = any
+  defaults JSONB NOT NULL DEFAULT '{}', icon TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (workspace_id, id), UNIQUE (workspace_id, project_id, name)
+);
+
+CREATE TABLE relation_types (
+  workspace_id UUID NOT NULL, id UUID NOT NULL DEFAULT gen_random_uuid(), project_id UUID NOT NULL,
+  name TEXT NOT NULL, inverse_name TEXT, symmetric BOOLEAN NOT NULL DEFAULT false,
+  dag BOOLEAN NOT NULL DEFAULT false, source_types UUID[], target_types UUID[],
+  PRIMARY KEY (workspace_id, id), UNIQUE (workspace_id, project_id, name)
+);
+
+-- Projections (rebuildable) --------------------------------------------------
+CREATE TABLE pages (
+  workspace_id UUID NOT NULL, id UUID NOT NULL,             -- id = the page block id
+  project_id UUID NOT NULL, doc_id UUID NOT NULL,
+  title TEXT NOT NULL DEFAULT '', title_norm TEXT NOT NULL DEFAULT '',
+  parent_page_id UUID, journal_date DATE, format TEXT NOT NULL DEFAULT 'outliner',
+  icon TEXT, attributes JSONB NOT NULL DEFAULT '{}', title_conflict BOOLEAN NOT NULL DEFAULT false,
+  indexed_seq BIGINT NOT NULL, deleted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (workspace_id, id)
+);
+CREATE INDEX pages_title ON pages (workspace_id, project_id, title_norm);
+CREATE INDEX pages_journal ON pages (workspace_id, project_id, journal_date) WHERE journal_date IS NOT NULL;
+
+CREATE TABLE page_aliases (
+  workspace_id UUID NOT NULL, alias_norm TEXT NOT NULL, page_id UUID NOT NULL,
+  PRIMARY KEY (workspace_id, alias_norm)
+);
+
+CREATE TABLE blocks (
+  workspace_id UUID NOT NULL, id UUID NOT NULL, project_id UUID NOT NULL,
+  page_id UUID NOT NULL, doc_id UUID NOT NULL, parent_block_id UUID,
+  rank TEXT NOT NULL, wbs_path LTREE NOT NULL, depth INT NOT NULL,
+  type_id UUID, markdown TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '',
+  tsv TSVECTOR GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED,
+  attributes JSONB NOT NULL DEFAULT '{}', invalid_attributes JSONB NOT NULL DEFAULT '{}',
+  compliant BOOLEAN NOT NULL DEFAULT true, has_acl BOOLEAN NOT NULL DEFAULT false,
+  src_line INT, indexed_seq BIGINT NOT NULL,
+  created_by TEXT NOT NULL, updated_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL, deleted_at TIMESTAMPTZ,
+  PRIMARY KEY (workspace_id, id)
+);
+CREATE INDEX blocks_tree   ON blocks (workspace_id, page_id, parent_block_id, rank);
+CREATE INDEX blocks_doc    ON blocks (workspace_id, doc_id);
+CREATE INDEX blocks_type   ON blocks (workspace_id, project_id, type_id);
+CREATE INDEX blocks_path   ON blocks USING GIST (wbs_path);
+CREATE INDEX blocks_attrs  ON blocks USING GIN (attributes jsonb_path_ops);
+CREATE INDEX blocks_trgm   ON blocks USING GIN (text gin_trgm_ops);
+CREATE INDEX blocks_tsv    ON blocks USING GIN (tsv);
+
+CREATE TABLE block_properties (
+  workspace_id UUID NOT NULL, block_id UUID NOT NULL, property_id UUID NOT NULL, ord INT NOT NULL DEFAULT 0,
+  value_text TEXT, value_number NUMERIC, value_date TIMESTAMPTZ, value_bool BOOLEAN,
+  value_ref UUID, value_principal TEXT,
+  PRIMARY KEY (workspace_id, block_id, property_id, ord)
+);
+CREATE INDEX bp_text   ON block_properties (workspace_id, property_id, value_text);
+CREATE INDEX bp_num    ON block_properties (workspace_id, property_id, value_number);
+CREATE INDEX bp_date   ON block_properties (workspace_id, property_id, value_date);
+CREATE INDEX bp_ref    ON block_properties (workspace_id, property_id, value_ref);
+CREATE INDEX bp_princ  ON block_properties (workspace_id, property_id, value_principal);
+
+CREATE TABLE block_edges (
+  id BIGSERIAL, workspace_id UUID NOT NULL,
+  source_block_id UUID NOT NULL, target_block_id UUID,          -- NULL while unresolved
+  edge_kind TEXT NOT NULL CHECK (edge_kind IN ('ref','tag','embed','relation')),
+  relation_type_id UUID, origin TEXT NOT NULL CHECK (origin IN ('inline','property')),
+  target_title TEXT, indexed_seq BIGINT NOT NULL,
+  PRIMARY KEY (workspace_id, id),
+  UNIQUE (workspace_id, source_block_id, edge_kind, relation_type_id, target_block_id, target_title)
+);
+CREATE INDEX edges_target ON block_edges (workspace_id, target_block_id, edge_kind, relation_type_id);
+CREATE INDEX edges_source ON block_edges (workspace_id, source_block_id, edge_kind, relation_type_id);
+
+CREATE TABLE doc_access (                                       -- projected from FGA
+  workspace_id UUID NOT NULL, doc_id UUID NOT NULL, set_id TEXT NOT NULL,
+  permission TEXT NOT NULL CHECK (permission IN ('view','edit')),
+  PRIMARY KEY (workspace_id, doc_id, permission, set_id)
+);
+CREATE INDEX doc_access_set ON doc_access (workspace_id, set_id, permission);
+
+CREATE TABLE principal_sets (                                   -- cached per principal
+  workspace_id UUID NOT NULL, principal_id TEXT NOT NULL, set_id TEXT NOT NULL,
+  computed_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (workspace_id, principal_id, set_id)
+);
+
+CREATE TABLE publications (
+  workspace_id UUID NOT NULL, id UUID NOT NULL DEFAULT gen_random_uuid(), page_id UUID NOT NULL,
+  slug TEXT NOT NULL, mode TEXT NOT NULL CHECK (mode IN ('live','snapshot')), pinned_seq BIGINT,
+  include_children BOOLEAN NOT NULL DEFAULT true, expires_at TIMESTAMPTZ,
+  created_by TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), revoked_at TIMESTAMPTZ,
+  PRIMARY KEY (workspace_id, id), UNIQUE (workspace_id, slug)
+);
+
+CREATE TABLE assets (
+  workspace_id UUID NOT NULL, id UUID NOT NULL DEFAULT gen_random_uuid(),
+  sha256 BYTEA NOT NULL, size BIGINT NOT NULL, content_type TEXT NOT NULL,
+  storage_key TEXT NOT NULL, key_version INT NOT NULL, created_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), deleted_at TIMESTAMPTZ,
+  PRIMARY KEY (workspace_id, id), UNIQUE (workspace_id, sha256)
+);
+
+CREATE TABLE schemes (
+  workspace_id UUID NOT NULL, version INT NOT NULL, scheme JSONB NOT NULL,
+  fga_model_id TEXT NOT NULL, created_by TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (workspace_id, version)
+);
+
+CREATE TABLE audit_log (
+  workspace_id UUID NOT NULL, id BIGSERIAL,
+  at TIMESTAMPTZ NOT NULL DEFAULT now(), principal_id TEXT NOT NULL, owner_id TEXT,
+  action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT NOT NULL,
+  detail JSONB NOT NULL DEFAULT '{}', prev_hash BYTEA NOT NULL, hash BYTEA NOT NULL,   -- SHA-256 chain per workspace
+  PRIMARY KEY (workspace_id, id)
+);
+
+CREATE TABLE idempotency_keys (
+  workspace_id UUID NOT NULL, principal_id TEXT NOT NULL, key TEXT NOT NULL,
+  request_hash BYTEA NOT NULL, response BYTEA NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (workspace_id, principal_id, key)
+);
+</code></pre>
+<h3 id="work-items">Work items</h3>
+<p>A work item is a block whose type extends the shipped base type <code>work</code> (<code>owns_doc = true</code>, <code>numbered = true</code>); <code>task</code>, <code>bug</code>, <code>feature</code> and <code>epic</code> are shipped subtypes and all of them are rows, not code. Any doc-owning type behaves like a page: it has its own doc, its own boundary and its own publication. The <code>page</code> type is the reserved doc-owning type with <code>numbered = false</code>. Keys are allocated on the API path only, which is why <code>SetType</code> and <code>PagesService.Create</code> are the only ways a block becomes a work item.</p>
+<pre><code class="language-sql">CREATE TABLE project_counters (
+  workspace_id UUID NOT NULL, project_id UUID NOT NULL,
+  prefix TEXT NOT NULL CHECK (prefix ~ '^[A-Z][A-Z0-9]{1,9}$'),    -- KB in KB-123
+  next_number BIGINT NOT NULL DEFAULT 1,
+  PRIMARY KEY (workspace_id, project_id)
+);
+
+CREATE TABLE block_keys (
+  workspace_id UUID NOT NULL, key TEXT NOT NULL,                     -- KB-123
+  block_id UUID NOT NULL, current BOOLEAN NOT NULL DEFAULT true,     -- old keys stay as aliases after a cross-project move
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (workspace_id, key)
+);
+CREATE INDEX block_keys_block ON block_keys (workspace_id, block_id) WHERE current;
+</code></pre>
+<p>Allocation is <code>UPDATE project_counters SET next_number = next_number + 1 WHERE … RETURNING next_number</code> inside the materializer transaction, so a key is never issued twice and never issued for a write that rolls back. The key is written into the block's property bag as the reserved property <code>key</code> and projected to <code>blocks.key</code>.</p>
+<h3 id="physical-design">Physical design</h3>
+<ul>
+<li><code>doc_updates</code>, <code>doc_snapshots</code>: <code>ALTER COLUMN ciphertext SET STORAGE EXTERNAL</code>. Ciphertext does not compress, so TOAST stores it uncompressed and skips the compression pass on every write.</li>
+<li><code>docs</code>, <code>blocks</code>, <code>pages</code>: <code>WITH (fillfactor = 80)</code> so <code>current_seq</code>, <code>indexed_seq</code> and projection updates stay HOT updates without index churn; per-table autovacuum: <code>autovacuum_vacuum_scale_factor = 0.02</code>, <code>autovacuum_vacuum_cost_delay = 2ms</code>.</li>
+<li><code>outbox</code> and <code>audit_log</code> are range-partitioned by time (daily, monthly); retention is <code>DROP PARTITION</code>, never a bulk <code>DELETE</code>.</li>
+<li><code>doc_updates</code> is pruned per doc by primary-key range in batches of 1,000 rows once a covering snapshot exists; the delete path is index-only.</li>
+<li>BRIN indexes on <code>doc_updates(created_at)</code>, <code>outbox(created_at)</code> and <code>audit_log(at)</code> for time-window scans; B-tree only where lookups need equality.</li>
+<li>GIN indexes on <code>blocks</code> keep <code>fastupdate = on</code> with <code>gin_pending_list_limit = 8MB</code>; search lives on <code>tsv</code> and substring match on the trigram index, so one block update touches two GIN entries.</li>
+<li>Every query names its columns (<code>SELECT *</code> fails lint); hot paths use prepared statements through pgx; generated query SQL is parameterized and plan-cached.</li>
+</ul>
+<h3 id="row-level-security">Row-level security</h3>
+<p>Every tenant table has <code>ALTER TABLE … ENABLE ROW LEVEL SECURITY</code> and one policy: <code>workspace_id = current_setting('app.workspace_id')::uuid</code>. The API sets <code>app.workspace_id</code> per transaction from the authenticated request. Migrations run as a separate role that bypasses RLS; the application role cannot. This is defense in depth behind the mandatory <code>workspace_id</code> predicate in every query.</p>
+<h3 id="retention">Retention</h3>
+<table>
+<thead>
+<tr>
+<th>Data</th>
+<th>Retention</th>
+<th>Mechanism</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>doc_updates</code></td>
+<td>30 days after they are covered by a snapshot</td>
+<td>compactor prune job</td>
+</tr>
+<tr>
+<td><code>doc_snapshots</code></td>
+<td>latest always; one per day for 90 days; named forever</td>
+<td>compactor</td>
+</tr>
+<tr>
+<td><code>outbox</code></td>
+<td>7 days after <code>published_at</code></td>
+<td>purge job</td>
+</tr>
+<tr>
+<td><code>idempotency_keys</code></td>
+<td>24 hours</td>
+<td>purge job</td>
+</tr>
+<tr>
+<td><code>audit_log</code></td>
+<td>forever by default; export to object storage by policy</td>
+<td>admin job</td>
+</tr>
+<tr>
+<td>Trash (<code>deleted_at</code>)</td>
+<td>30 days, then purge of truth and projections</td>
+<td>purge job</td>
+</tr>
+</tbody>
+</table>
+<h2 id="4-identity-and-authentication">4. Identity and authentication</h2>
+<p>Every principal is a public key expressed as a DID; there are no accounts, passwords or email addresses anywhere in the system. Users prove control of a key, the node issues short-lived sessions, and every other principal (device, agent token, share link) is owned by a user.</p>
+<h3 id="principal-kinds">Principal kinds</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>DID form</th>
+<th>Proof</th>
+<th>Owner</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>user (wallet)</td>
+<td><code>did:pkh:eip155:&lt;chain&gt;:&lt;address&gt;</code></td>
+<td>SIWE (EIP-4361) message signed by the wallet; RainbowKit on the client side</td>
+<td>—</td>
+</tr>
+<tr>
+<td>user (local)</td>
+<td><code>did:key:z6Mk…</code> (Ed25519)</td>
+<td>signed nonce; key generated by the web app with WebCrypto (non-extractable, IndexedDB) or by the R2 desktop node (OS keychain)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>device</td>
+<td><code>did:key:…</code></td>
+<td>attestation: the owner's signature over the device's signing key</td>
+<td>user</td>
+</tr>
+<tr>
+<td>agent</td>
+<td><code>did:key:…</code> minted by the node</td>
+<td>bearer token (hash stored)</td>
+<td>user</td>
+</tr>
+<tr>
+<td>link</td>
+<td><code>did:key:…</code> minted by the node</td>
+<td>share-link token</td>
+<td>user (creator)</td>
+</tr>
+<tr>
+<td>node</td>
+<td><code>did:key:…</code></td>
+<td>node identity key</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>A user may hold both a wallet DID and a local DID; linking is mutual: each key signs a statement naming the other, stored as <code>attestation</code> on the secondary principal with <code>owner_id</code> pointing at the primary. Linked principals resolve to one identity for permissions.</p>
+<h3 id="login">Login</h3>
+<pre class="mermaid">sequenceDiagram
+  participant Client
+  participant API
+  Client-&gt;&gt;API: AuthService.Challenge(did)
+  API--&gt;&gt;Client: nonce (5 min TTL) + SIWE message for did:pkh
+  Client-&gt;&gt;API: AuthService.Verify(did, signature, device?)
+  API-&gt;&gt;API: verify signature, nonce single-use, domain and chain match
+  API--&gt;&gt;Client: access_token (15 min), refresh_token (30 d, rotating)
+</pre>
+<p>Reading: SIWE verification checks domain, nonce, expiry and chain id; EIP-1271 contract wallets are verified by RPC to a configured chain endpoint, or refused when none is configured.</p>
+<h3 id="sessions-and-tokens">Sessions and tokens</h3>
+<ul>
+<li>Access token: PASETO v4.local, 15 minutes, claims <code>sub</code> (DID), <code>dev</code> (device DID), <code>sid</code>, <code>iat</code>, <code>exp</code>. Verified locally; no database read.</li>
+<li>Refresh token: opaque 256-bit, stored as SHA-256 in <code>sessions.refresh_hash</code>, rotated on every use; reuse of a rotated token revokes the whole session.</li>
+<li>Agent tokens: opaque 256-bit, prefix <code>kba_</code>, stored hashed; <code>scopes[]</code> of <code>{resource_type, resource_id, role}</code>, <code>tools[]</code> for MCP, optional <code>expires_at</code>. Presented as <code>Authorization: Bearer kba_…</code>. Revocation is immediate.</li>
+<li>Node-issued OAuth access tokens for MCP clients: audience-bound JWT (RS256, node key), 1 hour, mapped to an agent principal created at consent time.</li>
+<li>Transport: TLS only; HSTS; tokens never in query strings.</li>
+</ul>
+<h3 id="devices">Devices</h3>
+<p><code>RegisterDevice</code> stores an Ed25519 signing key with the owner's attestation and binds sessions to the device DID for audit and revocation. Devices hold no workspace key material; the cache key that protects a device's IndexedDB store is generated locally and never registered. <code>RevokeDevice</code> revokes the device's sessions and triggers no key rotation.</p>
+<h3 id="invitations-and-share-links">Invitations and share links</h3>
+<ul>
+<li>Invites are bound to a DID or an EVM address; accepting requires a session for that DID. Invites expire after 14 days by default.</li>
+<li>Share links carry a 256-bit token; <code>Redeem</code> grants the caller's DID the link's role on the resource, or creates an anonymous viewer session when the link allows anonymous access. <code>max_uses</code> and <code>expires_at</code> are enforced at redeem time.</li>
+</ul>
+<h3 id="authorization-inputs-per-request">Authorization inputs per request</h3>
+<p>Each request resolves: the acting principal, its owner (for agents and devices), the workspace, and the principal's cached set list (<code>principal_sets</code>). Agents always produce two FGA checks, one as the agent and one as the owner; both must allow. All of this happens before the handler runs and is attached to the request context.</p>
+<h3 id="rate-limits-and-abuse">Rate limits and abuse</h3>
+<table>
+<thead>
+<tr>
+<th>Limit</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Challenge requests per IP</td>
+<td>30 / min</td>
+</tr>
+<tr>
+<td>Failed verifications per DID</td>
+<td>10 / 10 min, then 15 min lockout</td>
+</tr>
+<tr>
+<td>Requests per access token</td>
+<td>600 / min</td>
+</tr>
+<tr>
+<td>Requests per agent token</td>
+<td>300 / min, configurable per token</td>
+</tr>
+<tr>
+<td>Concurrent sessions per user</td>
+<td>20</td>
+</tr>
+</tbody>
+</table>
+<p>Limits are enforced with a token bucket in Postgres for Compose and in NATS KV for Kubernetes; responses carry <code>RateLimit-Limit</code>, <code>RateLimit-Remaining</code>, <code>RateLimit-Reset</code>.</p>
+<h2 id="5-encryption-and-key-management">5. Encryption and key management</h2>
+<p>Six rules define encryption in R1; the rest of this section is their consequence.</p>
+<ol>
+<li>One key per workspace: XChaCha20-Poly1305 over <code>doc_updates</code>, <code>doc_snapshots</code> and every object in object storage, AAD-bound to workspace, doc and seq. About a hundred lines of Go behind one <code>KeyRing</code> interface.</li>
+<li>The node holds the key. It is wrapped to the node's key in <code>workspace_keys</code>; on Compose the node key is a sealed file with a passphrase, on Kubernetes a Secret or a cloud KMS key, on the R2 desktop the OS keychain. Nothing else in the system ever sees a workspace key.</li>
+<li>Everything above the <code>KeyRing</code> is plaintext. The materializer decrypts, applies the write, encrypts, commits. The indexer decrypts and writes <code>blocks</code>, <code>block_properties</code>, <code>block_edges</code> and <code>tsv</code>. Search, CEL, the Work surface and every MCP tool run on those tables and never touch ciphertext; they work exactly as they would with no encryption at all.</li>
+<li>Devices get TLS, a session and a cache key. The sync room decrypts at the node edge and sends plaintext Loro updates over TLS to a session already bound to the device DID. Locally, the client encrypts its IndexedDB store with a per-device key: a non-extractable WebCrypto key in the browser, <code>safeStorage</code> in the OS keychain in the R2 desktop app.</li>
+<li>Rotation is rare. Removing a member is a permission change; they never had the key. Rotation is for compromise or policy: a new version for new writes, a background re-encrypt, done.</li>
+<li>Backups are encrypted by the backup tool with a key derived from the node key: pgBackRest's repository cipher on Compose, Barman Cloud SSE-C on Kubernetes.</li>
+</ol>
+<p>Not in this design, by decision: client-held workspace keys (a node that cannot read a workspace cannot search it, query it or serve agents, so that is a different product, not a later phase); device recipients in the key ring (10K laptops holding the org key is 10K places it can leave from, plus a rotation on every lost device); OpenBao Transit in R1 (sealed file or KMS until a customer asks); any encryption layer on the wire beyond TLS. Per-object DEKs stay only because they make rotation cheap: one wrap per upload.</p>
+<h3 id="key-hierarchy">Key hierarchy</h3>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Algorithm</th>
+<th>Where it lives</th>
+<th>Rotated</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Node identity key</td>
+<td>Ed25519 (signing) + X25519 (key wrapping)</td>
+<td>sealed file with Argon2id passphrase (Compose); Secret or cloud KMS (Kubernetes); OS keychain (desktop, R2)</td>
+<td>manual, with a re-wrap of every workspace key</td>
+</tr>
+<tr>
+<td>Workspace key, per version</td>
+<td>256-bit XChaCha20-Poly1305</td>
+<td><code>workspace_keys</code>, HPKE-wrapped (RFC 9180, X25519-HKDF-SHA256, ChaCha20-Poly1305) to the node</td>
+<td>rare: compromise or policy</td>
+</tr>
+<tr>
+<td>Per-object DEK</td>
+<td>256-bit, wrapped by the workspace key</td>
+<td>object header in object storage</td>
+<td>with the workspace key: re-wrap headers, not bodies</td>
+</tr>
+<tr>
+<td>Device cache key</td>
+<td>AES-256-GCM, generated on the device, never leaves it</td>
+<td>non-extractable WebCrypto key (browser); OS keychain via <code>safeStorage</code> (desktop, R2)</td>
+<td>on sign-out</td>
+</tr>
+<tr>
+<td>Backup key</td>
+<td>derived from the node key with HKDF</td>
+<td>pgBackRest config (Compose); Secret (Kubernetes)</td>
+<td>with the node key</td>
+</tr>
+<tr>
+<td>Session and token secrets</td>
+<td>random 256-bit</td>
+<td>hashed at rest (SHA-256)</td>
+<td>rotation by expiry</td>
+</tr>
+</tbody>
+</table>
+<h3 id="what-is-encrypted">What is encrypted</h3>
+<table>
+<thead>
+<tr>
+<th>Data</th>
+<th>Encrypted with</th>
+<th>Key custody</th>
+<th>AAD</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>doc_updates.ciphertext</code>, <code>doc_snapshots.ciphertext</code> (Postgres)</td>
+<td>workspace key at <code>key_version</code>, XChaCha20-Poly1305</td>
+<td>key ring, node</td>
+<td><code>workspace_id ‖ doc_id ‖ seq</code> (‖ <code>"snapshot"</code>)</td>
+</tr>
+<tr>
+<td>Assets, cold snapshots, export archives, import uploads (object storage)</td>
+<td>per-object 256-bit DEK, XChaCha20-Poly1305 in 1 MiB chunks; DEK wrapped by the workspace key and stored in the object header</td>
+<td>object header</td>
+<td><code>workspace_id ‖ object_id ‖ chunk</code></td>
+</tr>
+<tr>
+<td>Database backups (object storage)</td>
+<td>Compose: pgBackRest AES-256-CBC repository cipher, client-side. Kubernetes: CloudNativePG Barman Cloud plugin with SSE-C (Barman 3.20+); the store keeps only a hash of the key</td>
+<td>key derived from the node key</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Browser and desktop caches (IndexedDB)</td>
+<td>AES-256-GCM with a per-device key that never leaves the device</td>
+<td>non-extractable WebCrypto key (browser); OS keychain via <code>safeStorage</code> (desktop, R2)</td>
+<td><code>doc_id</code></td>
+</tr>
+<tr>
+<td>Projections (Postgres: <code>blocks</code>, <code>block_properties</code>, <code>block_edges</code>, <code>pages</code>, search)</td>
+<td>plaintext inside Postgres by design; volume encryption</td>
+<td>—</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>AAD binding means a ciphertext moved to another doc, seq or workspace fails to decrypt; a nonce is random per message and prepended to the ciphertext.</p>
+<h3 id="object-storage-contract">Object storage contract</h3>
+<p>The bucket contains only ciphertext produced by the node or by a backup tool holding a node-derived key; the object store is never trusted with plaintext, whichever product implements it.</p>
+<ul>
+<li><code>EncryptedObjectStore</code> is the only package allowed to import the S3 client (aws-sdk-go-v2, path-style addressing); a compile-time lint fails any other import. Every put and get goes through it.</li>
+<li>Envelope encryption per object: random 256-bit DEK, XChaCha20-Poly1305 over 1 MiB chunks so range reads and multipart uploads work; a 256-byte header carries <code>alg</code>, <code>key_version</code>, <code>purpose</code> and the wrapped DEK. The chunk index is part of the AAD, so chunks cannot be reordered or swapped between objects.</li>
+<li>Object keys are opaque, <code>{workspace_id}/{purpose}/{uuid}</code>; <code>Content-Type</code> is always <code>application/octet-stream</code>; user metadata carries only <code>kb-env=1</code>. The store learns object counts, sizes and workspace ids, nothing else. No store-side encryption is required or relied on.</li>
+<li>Backups are the one path the node does not write itself, so the backup tool encrypts before upload: pgBackRest's repository cipher on Compose (client-side), Barman Cloud with SSE-C on Kubernetes (key supplied per request, never stored by the store). Both keys derive from the node key, so losing the node key means losing backups, which is why <code>AdminService.ExportNodeKey</code> exists.</li>
+<li>Verification: <code>AdminService.Verify</code> samples 100 objects per bucket, requires the envelope header, decrypts and checks the AAD; CI reads raw objects behind every write path (asset, cold snapshot, export, import, backup) and fails on any recognizable plaintext; the desktop filesystem backend runs the same suite.</li>
+</ul>
+<p>Store selection: SeaweedFS (Apache 2.0) is the bundled default because MinIO's community edition entered maintenance mode in December 2025 and its repository was archived in April 2026. The S3 API remains the contract, and the object-store suite runs against SeaweedFS, Ceph RGW and AWS S3 in CI so the store stays interchangeable.</p>
+<h3 id="node-key-custody-by-profile">Node key custody by profile</h3>
+<ul>
+<li>Compose: the node key is generated at first start, sealed with Argon2id under <code>KB_NODE_KEY_PASSPHRASE</code>, and written to <code>KB_NODE_KEY_FILE</code>; without the passphrase the node refuses to serve.</li>
+<li>Kubernetes: the same sealed file in a Secret, or <code>KB_NODE_KEY_KMS</code> naming a cloud KMS key that unwraps it at start.</li>
+<li>Desktop (R2): generated on first run and stored in the macOS Keychain, the Windows DPAPI-protected store, or the Linux Secret Service; never written to disk in plaintext.</li>
+</ul>
+<h3 id="lifecycle-operations">Lifecycle operations</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Who</th>
+<th>Steps</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Create workspace</td>
+<td>any user</td>
+<td>generate key v1; wrap to the node; write <code>workspace_keys</code>; set <code>current_key_version = 1</code></td>
+</tr>
+<tr>
+<td>Remove a member</td>
+<td>workspace admin</td>
+<td>a permission change only; no key operation, they never held the key</td>
+</tr>
+<tr>
+<td>Rotate workspace key</td>
+<td>workspace admin, <code>WorkspacesService.RotateKey</code>; compromise or policy</td>
+<td>generate v(n+1); wrap to the node; new writes use v(n+1); a background job re-wraps per-object DEKs and re-encrypts doc rows, then updates <code>key_version</code>; old versions stay readable until it finishes</td>
+</tr>
+<tr>
+<td>Rotate node key</td>
+<td>operator, <code>AdminService.RotateNodeKey</code></td>
+<td>generate a new node key; re-wrap every workspace key to it in one transaction per workspace; retire the old key after verification</td>
+</tr>
+<tr>
+<td>Export for migration</td>
+<td>workspace admin, <code>WorkspacesService.Export</code></td>
+<td>writes truth tables plus the workspace key wrapped to a recipient key the admin supplies</td>
+</tr>
+</tbody>
+</table>
+<h3 id="unwrapped-key-handling">Unwrapped key handling</h3>
+<p>Unwrapped workspace keys live only in process memory, in an LRU with a 10-minute idle TTL, zeroized on eviction. They are never logged, never included in error details, and never sent over NATS. Rooms, the materializer, the indexer and the compactor fetch keys through one internal <code>KeyRing</code> interface, which is the only code path that calls HPKE unwrap.</p>
+<h3 id="the-honest-limits">The honest limits</h3>
+<p>The index is plaintext inside Postgres. That is the price of search and agents: no design gives both server-side search and zero knowledge, and products that claim both do client-side search over a small corpus. The security statement is therefore exact: history and assets are encrypted with a per-workspace key held by the node; the query index relies on volume encryption; the node is trusted. The browser cache key is only as safe as the disk it sits on, because non-extractable is an API property, not a storage one; on the desktop app the keychain makes it real.</p>
+<h2 id="6-authorization">6. Authorization</h2>
+<p>Authorization is OpenFGA, one store per workspace, with the model generated from a workspace-owned permission scheme; roles are data, not code. Block-level permissions come from making the doc the permission unit and letting any block become a doc boundary.</p>
+<h3 id="permission-scheme">Permission scheme</h3>
+<p>The scheme is JSON stored in <code>schemes</code>, versioned, compiled to an FGA authorization model on every change. The default scheme ships with every new workspace and is editable from day one.</p>
+<pre><code class="language-json">{
+  &quot;version&quot;: 1,
+  &quot;permissions&quot;: [&quot;view&quot;, &quot;edit&quot;, &quot;share&quot;, &quot;publish&quot;, &quot;change_type&quot;,
+                  &quot;set_property:*&quot;, &quot;manage_schema&quot;, &quot;manage_members&quot;, &quot;admin&quot;],
+  &quot;roles&quot;: {
+    &quot;viewer&quot;: { &quot;grants&quot;: [&quot;view&quot;] },
+    &quot;editor&quot;: { &quot;grants&quot;: [&quot;view&quot;, &quot;edit&quot;, &quot;change_type&quot;, &quot;set_property:*&quot;] },
+    &quot;publisher&quot;: { &quot;grants&quot;: [&quot;view&quot;, &quot;publish&quot;] },
+    &quot;admin&quot;: { &quot;grants&quot;: [&quot;*&quot;] },
+    &quot;assignee&quot;: { &quot;grants&quot;: [&quot;set_property:status&quot;], &quot;reflected_from&quot;: &quot;props.assignee&quot; }
+  },
+  &quot;assignable_at&quot;: {
+    &quot;viewer&quot;: [&quot;workspace&quot;, &quot;project&quot;, &quot;doc&quot;],
+    &quot;editor&quot;: [&quot;workspace&quot;, &quot;project&quot;, &quot;doc&quot;],
+    &quot;publisher&quot;: [&quot;project&quot;],
+    &quot;admin&quot;: [&quot;workspace&quot;]
+  },
+  &quot;conditions&quot;: {
+    &quot;not_closed&quot;: { &quot;params&quot;: { &quot;status&quot;: &quot;string&quot; }, &quot;cel&quot;: &quot;status != 'closed'&quot; }
+  },
+  &quot;exclusions&quot;: { &quot;blocked&quot;: [&quot;*&quot;] }
+}
+</code></pre>
+<p>Rules the compiler enforces: permission names are closed to the list above plus <code>set_property:&lt;property_id&gt;</code>; a role may inherit only roles assignable at the same or a wider level; conditions may only reference the context keys listed under Conditions; a scheme that would remove the last admin is refused.</p>
+<h3 id="generated-fga-model">Generated FGA model</h3>
+<pre><code>model
+  schema 1.1
+
+type user
+type agent
+  relations
+    define owner: [user]
+type group
+  relations
+    define member: [user, group#member]
+
+type workspace
+  relations
+    define admin:   [user, agent, group#member]
+    define editor:  [user, agent, group#member] or admin
+    define viewer:  [user, agent, group#member] or editor
+    define blocked: [user, agent]
+    define can_manage_members: admin but not blocked
+    define can_manage_schema:  admin but not blocked
+
+type project
+  relations
+    define workspace: [workspace]
+    define publisher: [user, agent, group#member]
+    define editor:  [user, agent, group#member] or editor from workspace
+    define viewer:  [user, agent, group#member] or editor or viewer from workspace
+    define blocked: blocked from workspace
+    define can_view:    viewer but not blocked
+    define can_edit:    editor but not blocked
+    define can_publish: (publisher or editor) but not blocked
+
+type doc
+  relations
+    define project: [project]
+    define parent:  [doc]                      -- absent = restricted (no inheritance)
+    define editor:  [user, agent, group#member] or editor from parent or editor from project
+    define viewer:  [user, agent, group#member, user:*] or editor or viewer from parent or viewer from project
+    define blocked: blocked from project
+    define can_view:  viewer but not blocked
+    define can_edit:  editor but not blocked
+    define can_share: editor but not blocked
+
+type block
+  relations
+    define doc:      [doc]
+    define assignee: [user]                    -- reflected from props.assignee
+    define can_edit: can_edit from doc
+    define can_set_status: can_edit from doc or assignee
+
+type attribute_def
+  relations
+    define project: [project]
+    define writer:  [user, agent, group#member] or editor from project
+</code></pre>
+<p>Each custom role becomes one relation per assignable type; each permission becomes a computed relation over the roles that grant it; <code>exclusions</code> compile to <code>but not</code>; a condition compiles to an FGA condition and its tuples are written <code>with &lt;condition&gt;</code>. The compiler validates the model with the OpenFGA library before writing it; a rejected model leaves the previous version active.</p>
+<h3 id="tuples-the-platform-writes">Tuples the platform writes</h3>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Tuples</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Create workspace</td>
+<td><code>workspace:W#admin@user:U</code></td>
+</tr>
+<tr>
+<td>Create project</td>
+<td><code>project:P#workspace@workspace:W</code></td>
+</tr>
+<tr>
+<td>Create page</td>
+<td><code>doc:D#project@project:P</code>; <code>doc:D#parent@doc:&lt;parent page doc&gt;</code> when nested</td>
+</tr>
+<tr>
+<td><code>Restrict(block, inherit=false)</code></td>
+<td><code>doc:B#project@project:P</code>; no <code>parent</code> tuple</td>
+</tr>
+<tr>
+<td><code>Restrict(block, inherit=true)</code></td>
+<td>plus <code>doc:B#parent@doc:D</code></td>
+</tr>
+<tr>
+<td>Grant</td>
+<td><code>doc:D#editor@user:U</code>, <code>project:P#viewer@agent:A</code>, …</td>
+</tr>
+<tr>
+<td>Publish</td>
+<td><code>doc:D#viewer@user:*</code> for the page doc and each included child doc</td>
+</tr>
+<tr>
+<td>Property <code>assignee</code> changes</td>
+<td><code>block:X#assignee@user:U</code> written or deleted by the indexer</td>
+</tr>
+<tr>
+<td>Agent token created</td>
+<td><code>agent:A#owner@user:U</code> plus the scope tuples, each validated by a check as the owner</td>
+</tr>
+</tbody>
+</table>
+<h3 id="checks-by-operation">Checks by operation</h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Checks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Read page, block, query result row</td>
+<td><code>can_view</code> on the block's doc (via <code>doc_access</code> join for queries)</td>
+</tr>
+<tr>
+<td>Structured write to a block</td>
+<td><code>can_edit</code> on <code>block:X</code> when <code>has_acl</code>, else on its doc</td>
+</tr>
+<tr>
+<td>Set a property</td>
+<td><code>can_edit</code> on the block and <code>writer</code> on <code>attribute_def:&lt;property&gt;</code></td>
+</tr>
+<tr>
+<td>Change type</td>
+<td><code>can_edit</code> on the block and <code>change_type</code> permission</td>
+</tr>
+<tr>
+<td>Share, grant, revoke</td>
+<td><code>can_share</code> on the doc or <code>can_manage_members</code> on the workspace</td>
+</tr>
+<tr>
+<td>Publish</td>
+<td><code>can_publish</code> on the project</td>
+</tr>
+<tr>
+<td>Sync <code>Open</code> / <code>Push</code></td>
+<td><code>can_view</code> / <code>can_edit</code> on that doc</td>
+</tr>
+<tr>
+<td>Agent request</td>
+<td>every check twice: as <code>agent:A</code> and as its owner</td>
+</tr>
+</tbody>
+</table>
+<h3 id="block-level-boundaries">Block-level boundaries</h3>
+<p><code>BlocksService.Restrict(block_id, inherit)</code> splits the block's subtree into a new doc of kind <code>boundary</code>, writes a portal node in the parent doc, and writes the FGA tuples above. <code>Unrestrict</code> merges the subtree back and deletes the doc. A viewer without access to the boundary receives the portal with the block id only. A page may hold at most 200 boundaries. Cross-page moves of a boundary carry the doc and its grants.</p>
+<h3 id="access-projection-for-queries">Access projection for queries</h3>
+<p><code>doc_access(doc_id, set_id, permission)</code> is maintained from the FGA changelog: a worker tails <code>ReadChanges</code> and, for every affected doc, recomputes the usersets that grant <code>view</code> and <code>edit</code> (<code>project:P#viewer</code>, <code>doc:D#editor</code>, <code>user:U</code>, <code>public</code>). A principal's <code>principal_sets</code> is computed at session start and refreshed on ACL events for its workspace. Query filters are <code>doc_id IN (SELECT doc_id FROM doc_access WHERE set_id = ANY($sets) AND permission = 'view')</code>. Direct <code>Check</code> remains the gate for every write and every sync open.</p>
+<h3 id="conditions">Conditions</h3>
+<p>Context keys available to conditions: <code>block.props.*</code> (typed), <code>block.type</code>, <code>doc.kind</code>, <code>principal.kind</code>, <code>principal.did</code>, <code>now</code>. The API supplies them from projections at check time. Conditions run in FGA's CEL evaluator; the scheme validator rejects conditions referencing unknown keys.</p>
+<h3 id="explain">Explain</h3>
+<p><code>PolicyService.Explain(principal, permission, resource)</code> returns the FGA <code>Expand</code> tree annotated with the scheme role that produced each leaf, so an admin can answer "why can this agent edit this block" without reading the model.</p>
+<h2 id="7-write-path-sync-projections-and-events">7. Write path, sync, projections and events</h2>
+<p>All writes converge on one append to <code>doc_updates</code>: structured API writes go through the materializer, the web app and other Loro clients push updates through sync rooms, and both feed the same projection pipeline through the outbox.</p>
+<h3 id="structured-write-materializer">Structured write (materializer)</h3>
+<ol>
+<li>Resolve principal, workspace, FGA checks (section 6). Look up the <code>Idempotency-Key</code>; a hit returns the stored response.</li>
+<li><code>BEGIN</code>; <code>SELECT pg_advisory_xact_lock(hashtext(doc_id))</code> so one writer materializes a doc at a time on this node.</li>
+<li>Load the live doc: warm copy from the materializer LRU keyed by <code>(doc_id, current_seq)</code>, else <code>doc_snapshots</code> latest plus <code>doc_updates</code> since it, decrypted and imported into a <code>LoroDoc</code>.</li>
+<li>Check preconditions against the live doc: <code>if_version == current_seq</code> when supplied; block exists; parent exists; type rules on <code>SetType</code> and <code>SetProperties</code>.</li>
+<li>Apply the mutation in one Loro transaction; export the delta as an update from the pre-mutation version vector; encrypt with the current key version.</li>
+<li><code>UPDATE docs SET current_seq = current_seq + 1 … RETURNING current_seq</code>; <code>INSERT doc_updates</code>; <code>INSERT outbox</code>; <code>INSERT idempotency_keys</code>; <code>COMMIT</code>.</li>
+<li>Publish the outbox row to NATS after commit (<code>events.&lt;workspace_id&gt;</code>); on publish failure the outbox poller republishes within 1 s.</li>
+<li>Respond with <code>version = seq</code> and the doc's <code>indexed_seq</code>.</li>
+</ol>
+<p>Multiple nodes may materialize the same doc concurrently; the advisory lock is per node, and correctness comes from the CRDT: two updates produced from slightly different live states still merge. Preconditions (<code>if_version</code>) are the tool for callers who need linearizable semantics, and they are evaluated inside the lock on the freshest state the node has, so a stale node fails the precondition rather than writing on stale data.</p>
+<h3 id="batch-semantics">Batch semantics</h3>
+<p><code>BlocksService.Batch</code> applies up to 500 operations to one page as a single Loro transaction and one <code>doc_updates</code> row: all-or-nothing, one <code>seq</code>, one event with the operation list. Cross-page moves are the exception: one database transaction appends a delete-update to the source doc and an insert-update to the target doc, two <code>seq</code>s, one event.</p>
+<h3 id="sync-rooms">Sync rooms</h3>
+<ul>
+<li>Purpose: the web app holds a local Loro doc per open page, so editing is offline-first and collaborative at keystroke granularity; <code>SyncService</code> is its transport. Structured API writes remain the path for agents and integrations, which never use it.</li>
+<li>Wire: <code>SyncService</code> (<code>Open</code>, <code>Push</code>, <code>Pull</code>, <code>Subscribe</code>) is defined in <code>kb.v1</code> (section 12). Browsers use one WebSocket per tab at <code>/ws/sync</code>, multiplexing docs and carrying <code>SyncFrame</code> protobuf messages. Non-browser clients may use Connect: unary <code>Open</code>, <code>Push</code>, <code>Pull</code> and server-streaming <code>Subscribe</code>. One message set, two transports.</li>
+<li>Authentication: the first WebSocket frame carries the access token, already bound to the device DID; the room checks <code>can_view</code> on <code>Open</code> and <code>can_edit</code> on every <code>Push</code>; an ACL event for a doc closes the affected subscriptions.</li>
+<li><code>Open(doc_id, since_seq)</code> returns the latest snapshot plus updates after <code>since_seq</code>, decrypted at the node edge; hot docs come from room memory.</li>
+<li><code>Push(doc_id, client_id, updates[{client_seq, bytes}])</code>: validate the Loro header and size (≤ 1 MB), batch for 20 ms, allocate <code>seq</code>s as the doc's single writer, encrypt, insert one multi-row <code>doc_updates</code> batch plus outbox rows, commit, ack each update with its <code>seq</code>, then fan out one frame per subscriber per 50 ms tick with the batched updates. A duplicate <code>(client_id, client_seq)</code> is acked with its original <code>seq</code>.</li>
+<li><code>Pull(doc_id, since_seq)</code> fills gaps; the client calls it when it sees a <code>seq</code> gap and on reconnect before flushing its pending queue. Loro updates commute, so arrival order never matters.</li>
+<li><code>Subscribe</code> streams updates and awareness (Loro's ephemeral store: cursor, selection, name, color) with a 30 s TTL; awareness is never persisted or logged.</li>
+<li>Rooms: with <code>KB_ROLE=all</code> they are goroutines in the single process. On Kubernetes each <code>sync</code> pod owns a slice of a consistent-hash ring published in NATS; <code>Open</code> through the API returns the owning pod's <code>sync_url</code>; room loss rebuilds from the log; a pod change disconnects clients, which reconnect and <code>Pull</code>.</li>
+<li>Encryption: rooms never materialize a doc; they decrypt outbound and encrypt inbound at the node edge through the <code>KeyRing</code> and send plaintext Loro updates over TLS. TLS is the wire encryption; there is no layer on top of it.</li>
+<li>Validation: header and size at <code>Push</code>; semantic validation at compaction, where an update the compactor cannot import is quarantined (<code>doc_updates.quarantined_at</code>, alert) and skipped, so one bad client cannot poison a doc.</li>
+<li>Limits: 20 open docs per connection, 100 pushes/s per connection, 1 MB per update, 100 subscribers per room before a second room replica takes over fan-out.</li>
+</ul>
+<pre class="mermaid">sequenceDiagram
+  participant A as Editor A
+  participant R as Sync room
+  participant PG as Postgres
+  participant B as Editor B
+  A-&gt;&gt;R: push(update, client_seq)
+  R-&gt;&gt;R: batch 20 ms, allocate seq, encrypt
+  R-&gt;&gt;PG: INSERT doc_updates + outbox, COMMIT
+  R--&gt;&gt;A: ack(seq)
+  R--&gt;&gt;B: update frame (50 ms tick)
+  B-&gt;&gt;B: LoroDoc.import(update)
+</pre>
+<p>Reading: nothing is acknowledged before commit, and B receives the same bytes A produced, so both docs converge regardless of arrival order.</p>
+<h3 id="projection-pipeline">Projection pipeline</h3>
+<pre class="mermaid">flowchart LR
+  O[(outbox)] --&gt; P[poller: publish to NATS,&lt;br/&gt;enqueue River jobs]
+  P --&gt; I[index job per doc,&lt;br/&gt;coalesced]
+  I --&gt; B[(blocks, pages, edges,&lt;br/&gt;properties, search)]
+  I --&gt; F[FGA tuples for&lt;br/&gt;reflected relations]
+  P --&gt; C[compact job when&lt;br/&gt;seq gap &gt; 500 or tail &gt; 2 MB]
+  C --&gt; S[(doc_snapshots)]
+</pre>
+<p>Reading: one poller process (leader-elected via NATS KV) turns outbox rows into events and jobs; index jobs are keyed by <code>doc_id</code> with River's unique-job option so a burst of writes yields one run.</p>
+<p>Index job steps: lock the doc (advisory), load the live doc, materialize the tree, diff blocks against the projection by <code>id</code> (insert, update, delete), diff edges and properties as sets, resolve links by <code>title_norm</code> and aliases, mark unresolved refs with <code>target_title</code>, recompute <code>wbs_path</code> for moved subtrees, write <code>indexed_seq</code>, all in one transaction. Reindexing is idempotent; <code>AdminService.Reindex(workspace_id)</code> runs it for every doc.</p>
+<h3 id="events">Events</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Payload</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>page.created</code>, <code>page.updated</code>, <code>page.moved</code>, <code>page.trashed</code>, <code>page.restored</code></td>
+<td><code>page_id</code>, <code>doc_id</code>, <code>seq</code>, <code>actor</code></td>
+</tr>
+<tr>
+<td><code>block.created</code>, <code>block.updated</code>, <code>block.moved</code>, <code>block.deleted</code></td>
+<td><code>block_ids[]</code>, <code>page_id</code>, <code>seq</code>, <code>actor</code></td>
+</tr>
+<tr>
+<td><code>props.changed</code></td>
+<td><code>block_id</code>, <code>changes[{property_id, old, new}]</code></td>
+</tr>
+<tr>
+<td><code>type.changed</code></td>
+<td><code>block_id</code>, <code>old_type_id</code>, <code>new_type_id</code></td>
+</tr>
+<tr>
+<td><code>edge.added</code>, <code>edge.removed</code></td>
+<td><code>source</code>, <code>target</code>, <code>edge_kind</code>, <code>relation_type_id</code></td>
+</tr>
+<tr>
+<td><code>boundary.created</code>, <code>boundary.removed</code></td>
+<td><code>block_id</code>, <code>doc_id</code></td>
+</tr>
+<tr>
+<td><code>publication.created</code>, <code>publication.revoked</code></td>
+<td><code>page_id</code>, <code>publication_id</code>, <code>slug</code></td>
+</tr>
+<tr>
+<td><code>member.invited</code>, <code>member.joined</code>, <code>member.removed</code>, <code>grant.added</code>, <code>grant.removed</code></td>
+<td>principal, role, resource</td>
+</tr>
+<tr>
+<td><code>scheme.updated</code></td>
+<td><code>version</code></td>
+</tr>
+</tbody>
+</table>
+<p>Events carry no content beyond ids and property deltas; consumers read content through the API under their own permissions. <code>EventsService.Subscribe</code> streams from NATS with <code>since_cursor</code> replay from the outbox for up to 7 days.</p>
+<h3 id="audit">Audit</h3>
+<p>Every mutation and every agent tool call appends to <code>audit_log</code> with <code>hash = SHA256(prev_hash ‖ canonical row)</code>; <code>EventsService.VerifyAudit</code> walks the chain and reports the first broken link, if any. Reads by agents are logged; reads by users are not.</p>
+<h2 id="8-query-engine-cel">8. Query engine (CEL)</h2>
+<p><code>QueryService.Query</code> compiles a CEL expression over the block projection into one parameterized SQL statement, access-filtered by <code>doc_access</code>, paginated by keyset cursor only: no offset pagination and no total counts exist anywhere in the API. The same environment powers saved views, MCP <code>search_blocks</code>, and the Logseq simple-query translator.</p>
+<h3 id="environment">Environment</h3>
+<table>
+<thead>
+<tr>
+<th>Symbol</th>
+<th>CEL type</th>
+<th>Compiles to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code>, <code>page_id</code>, <code>doc_id</code>, <code>project_id</code>, <code>parent_id</code></td>
+<td>string</td>
+<td>column equality; <code>in</code> → <code>= ANY($n)</code></td>
+</tr>
+<tr>
+<td><code>key</code></td>
+<td>string</td>
+<td><code>blocks.key</code> (<code>KB-123</code>); <code>startsWith('KB-')</code> scopes a project</td>
+</tr>
+<tr>
+<td><code>type</code></td>
+<td>string (type name)</td>
+<td><code>type_id</code> resolved at compile time per project; unknown name → <code>CelError</code></td>
+</tr>
+<tr>
+<td><code>type_id</code></td>
+<td>string</td>
+<td><code>blocks.type_id</code></td>
+</tr>
+<tr>
+<td><code>is_a(name)</code></td>
+<td>bool</td>
+<td><code>type_id = ANY($ids)</code> where <code>$ids</code> is the type's inheritance closure resolved at compile time; <code>is_a('work')</code> matches every work type</td>
+</tr>
+<tr>
+<td><code>text</code></td>
+<td>string</td>
+<td><code>contains</code> → <code>text ILIKE</code> with <code>pg_trgm</code>; <code>startsWith</code>, <code>endsWith</code>; <code>matches(re)</code> → <code>text ~ $n</code> with RE2 syntax check and 512-char cap</td>
+</tr>
+<tr>
+<td><code>search(q)</code></td>
+<td>bool</td>
+<td><code>tsv @@ websearch_to_tsquery('simple', $n)</code>; also adds <code>ts_rank</code> as a sortable field <code>_rank</code></td>
+</tr>
+<tr>
+<td><code>props.&lt;name&gt;</code></td>
+<td>typed by property kind</td>
+<td>join to <code>block_properties</code> on <code>property_id</code>; <code>has(props.x)</code> → <code>EXISTS</code>; multi-valued kinds are lists</td>
+</tr>
+<tr>
+<td><code>path</code></td>
+<td>list(string)</td>
+<td><code>wbs_path</code>; <code>path.size()</code> → <code>nlevel</code></td>
+</tr>
+<tr>
+<td><code>depth</code></td>
+<td>int</td>
+<td><code>blocks.depth</code></td>
+</tr>
+<tr>
+<td><code>is_page</code></td>
+<td>bool</td>
+<td><code>type_id = page type</code></td>
+</tr>
+<tr>
+<td><code>created_at</code>, <code>updated_at</code></td>
+<td>timestamp</td>
+<td>columns; <code>duration()</code> and <code>timestamp()</code> native</td>
+</tr>
+<tr>
+<td><code>created_by</code>, <code>updated_by</code></td>
+<td>string (DID)</td>
+<td>columns</td>
+</tr>
+<tr>
+<td><code>me()</code></td>
+<td>string</td>
+<td>caller DID bound as a parameter</td>
+</tr>
+<tr>
+<td><code>now</code></td>
+<td>timestamp</td>
+<td>bound at query start</td>
+</tr>
+<tr>
+<td><code>descendant_of(id)</code></td>
+<td>bool</td>
+<td><code>wbs_path &lt;@ (SELECT wbs_path … WHERE id = $n)</code></td>
+</tr>
+<tr>
+<td><code>ancestor_of(id)</code></td>
+<td>bool</td>
+<td><code>wbs_path @&gt; (…)</code></td>
+</tr>
+<tr>
+<td><code>has_edge(rel, id)</code></td>
+<td>bool</td>
+<td><code>EXISTS (SELECT 1 FROM block_edges WHERE source = blocks.id AND relation_type_id = $r AND target = $n)</code></td>
+</tr>
+<tr>
+<td><code>edges_out(rel)</code>, <code>edges_in(rel)</code></td>
+<td>list(string)</td>
+<td>correlated subquery producing <code>array_agg</code>; usable with <code>.exists()</code> and <code>in</code></td>
+</tr>
+<tr>
+<td><code>refs(id)</code>, <code>referenced_by(id)</code></td>
+<td>bool</td>
+<td>inline-ref edges either direction</td>
+</tr>
+<tr>
+<td><code>in_collection(id)</code></td>
+<td>bool</td>
+<td><code>has_edge("member_of", id)</code></td>
+</tr>
+</tbody>
+</table>
+<p>Property names resolve within the query's project, then workspace-wide definitions; ambiguity is a compile error. <code>select</code>/<code>multi_select</code> values compare by option name, compiled to option ids.</p>
+<h3 id="supported-syntax">Supported syntax</h3>
+<p>Comparisons, <code>&amp;&amp;</code>, <code>||</code>, <code>!</code>, <code>in</code>, <code>has()</code>, string functions above, timestamp and duration arithmetic, list <code>exists()</code> and <code>all()</code> over property lists and <code>edges_*</code> results. Not supported in R1: <code>map()</code>, <code>filter()</code>, user-defined functions, nested <code>Query</code> calls, <code>size()</code> on <code>text</code>.</p>
+<h3 id="request-and-response">Request and response</h3>
+<pre><code class="language-json">{
+  &quot;workspace_id&quot;: &quot;…&quot;,
+  &quot;project_id&quot;: &quot;…&quot;,
+  &quot;cel&quot;: &quot;type == 'bug' &amp;&amp; props.status in ['open','triaged'] &amp;&amp; !has_edge('blocked_by','') &amp;&amp; updated_at &gt; now - duration('168h')&quot;,
+  &quot;order_by&quot;: [{&quot;field&quot;: &quot;props.priority&quot;, &quot;direction&quot;: &quot;DESC&quot;}, {&quot;field&quot;: &quot;updated_at&quot;, &quot;direction&quot;: &quot;DESC&quot;}],
+  &quot;page_size&quot;: 100,
+  &quot;cursor&quot;: &quot;&quot;,
+  &quot;include&quot;: [&quot;EDGES&quot;],
+  &quot;wait_for_seq&quot;: {&quot;doc_id&quot;: &quot;…&quot;, &quot;seq&quot;: 4231}
+}
+</code></pre>
+<p>Response: <code>blocks[]</code> (full Block shape), <code>next_cursor</code>, <code>indexed_seq</code> (minimum across returned docs), <code>stats {rows_scanned, ms}</code>. <code>order_by</code> accepts <code>_rank</code> only together with <code>search()</code>. Cursors encode the last row's sort keys plus <code>id</code>; they are opaque and expire with the schema version.</p>
+<h3 id="compilation-and-safety">Compilation and safety</h3>
+<ol>
+<li>Parse with cel-go, type-check against the environment for the project; reject on any unknown symbol with line and column.</li>
+<li>Walk the checked AST into a SQL builder; every literal becomes a bind parameter; no string concatenation of user input anywhere.</li>
+<li>Cost estimate: count of <code>EXISTS</code> subqueries, regex operators and <code>edges_*</code> aggregations; refuse above 50 units with <code>RESOURCE_EXHAUSTED</code>.</li>
+<li>Wrap with the access predicate and <code>SET LOCAL statement_timeout = '2s'</code>; run on a replica when one is configured.</li>
+<li>Cache compiled plans by <code>(project_id, schema_version, cel)</code> for 10 minutes.</li>
+</ol>
+<h3 id="cel-go-alignment">cel-go alignment</h3>
+<p>The engine follows the cel-go model exactly: the service defines the environment, users write expressions, parse and check happen once at save time, and the checked AST is what runs. Where we compile to SQL instead of evaluating in-process, the semantics below keep both paths equivalent, and a differential test proves it.</p>
+<table>
+<thead>
+<tr>
+<th>cel-go concept</th>
+<th>Implementation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Environment defined by the service</td>
+<td>one <code>cel.Env</code> per project, built from the project's property definitions and cached by <code>schema_version</code>; <code>block</code> is declared as the <code>kb.v1.Block</code> proto (<code>cel.Types</code>, <code>cel.Variable("block", cel.ObjectType("kb.v1.Block"))</code>); <code>props</code> is typed through a custom type provider generated from <code>property_definitions</code> (the Kubernetes DeclType pattern), so <code>props.due &gt; 'x'</code> is a check-time error</td>
+</tr>
+<tr>
+<td>Three phases: parse, check, evaluate</td>
+<td>saved views and scheme conditions store the checked AST (<code>CheckedExpr</code> bytes) and, for views, the generated SQL template; ad-hoc <code>Query</code> parses and checks per request behind a 10-minute cache keyed by <code>(project_id, schema_version, cel)</code>; a schema change re-checks stored ASTs and marks views that no longer type-check <code>status = needs_recheck</code></td>
+</tr>
+<tr>
+<td>Proto types as inputs</td>
+<td><code>block</code> fields use proto semantics; <code>now</code>, <code>created_at</code>, <code>updated_at</code> are <code>timestamp</code>; durations via <code>duration()</code></td>
+</tr>
+<tr>
+<td>Commutative <code>&amp;&amp;</code> and `</td>
+<td></td>
+</tr>
+<tr>
+<td>Macros</td>
+<td><code>cel.ClearMacros()</code> then <code>cel.Macros(has, exists, all)</code>; <code>exists_one</code>, <code>map</code>, <code>filter</code> are not registered, so they fail at parse time rather than at translation</td>
+</tr>
+<tr>
+<td>Custom functions instead of comprehensions</td>
+<td><code>descendant_of</code>, <code>ancestor_of</code>, <code>has_edge</code>, <code>edges_out</code>, <code>edges_in</code>, <code>refs</code>, <code>referenced_by</code>, <code>in_collection</code>, <code>search</code>, <code>me</code> are declared with <code>cel.Function</code> and typed overloads named <code>func_argType_argType</code>; each has a <code>cel.FunctionBinding</code> for in-process evaluation and an SQL emitter for the compiler, both from one table</td>
+</tr>
+<tr>
+<td>Tuning</td>
+<td>parser limits <code>cel.ParserRecursionLimit(32)</code> and <code>cel.ParserExpressionSizeLimit(4096)</code>; in-process programs use <code>cel.OptOptimize</code> and <code>cel.CostLimit</code> from <code>env.EstimateCost</code>; <code>QueryService.Explain</code> also runs the expression in-process against one block with <code>cel.OptExhaustiveEval</code> to show the value at every expression id</td>
+</tr>
+<tr>
+<td>Building JSON and protos</td>
+<td>reserved for R2 automations, where an action is a CEL expression that constructs a <code>kb.v1</code> request message under <code>cel.Container("kb.v1")</code></td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-sql">CREATE TABLE view_programs (                                   -- projection, rebuilt from view blocks
+  workspace_id UUID NOT NULL, view_block_id UUID NOT NULL, project_id UUID NOT NULL,
+  cel TEXT NOT NULL, checked_ast BYTEA NOT NULL, sql_template TEXT NOT NULL,
+  schema_version INT NOT NULL, status TEXT NOT NULL CHECK (status IN ('ok','needs_recheck','error')),
+  error TEXT, updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (workspace_id, view_block_id)
+);
+</code></pre>
+<p>Differential test: for every fixture expression, the in-process program evaluates each block of a seeded workspace and the set of <code>true</code> blocks must equal the SQL result set. Any divergence between the two paths fails CI.</p>
+<h3 id="limits">Limits</h3>
+<table>
+<thead>
+<tr>
+<th>Limit</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AST nodes</td>
+<td>200</td>
+</tr>
+<tr>
+<td><code>in</code> list length</td>
+<td>1000</td>
+</tr>
+<tr>
+<td><code>page_size</code></td>
+<td>500</td>
+</tr>
+<tr>
+<td>Statement timeout</td>
+<td>2 s (5 s for admins)</td>
+</tr>
+<tr>
+<td>Concurrent queries per principal</td>
+<td>8</td>
+</tr>
+</tbody>
+</table>
+<h3 id="postgres-performance-rules">Postgres performance rules</h3>
+<p>These rules are enforced by the query compiler and by an SQL lint in CI; a query shape that violates them cannot ship.</p>
+<table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Why</th>
+<th>Enforcement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keyset pagination only; no <code>OFFSET</code> anywhere in <code>kb.v1</code></td>
+<td><code>OFFSET n</code> reads and discards n rows, so page 100 costs 100× page 1</td>
+<td>cursors encode <code>(sort keys, id)</code>; SQL is <code>WHERE (k1, k2, id) &gt; ($1, $2, $3) ORDER BY k1, k2, id LIMIT n+1</code></td>
+</tr>
+<tr>
+<td>No total counts by default</td>
+<td><code>COUNT(*)</code> over a filtered set scans every match</td>
+<td><code>count_mode: NONE</code> (default), <code>ESTIMATE</code> (planner row estimate), <code>CAPPED</code> (<code>count(*)</code> over <code>LIMIT 10001</code>, reported as <code>10000+</code>)</td>
+</tr>
+<tr>
+<td>Group counts for boards in one query</td>
+<td>one query per column multiplies the scan</td>
+<td><code>count(*) FILTER (WHERE …)</code> with the same cap, or <code>LATERAL … LIMIT</code> per group for first pages</td>
+</tr>
+<tr>
+<td>Semi-joins for access and edges</td>
+<td>a correlated subquery per row is O(rows)</td>
+<td>compiler emits <code>EXISTS</code> / <code>IN (SELECT …)</code>; the <code>doc_access</code> filter is <code>set_id = ANY($sets)</code> on its index</td>
+</tr>
+<tr>
+<td>Sargable predicates only</td>
+<td>a function on an indexed column disables the index</td>
+<td>the compiler never wraps a column, except through expression columns it knows (<code>title_norm</code>, <code>tsv</code>)</td>
+</tr>
+<tr>
+<td>Text search through <code>tsv</code></td>
+<td><code>ILIKE '%x%'</code> alone is a scan</td>
+<td><code>search()</code> uses the GIN <code>tsv</code> index; <code>contains()</code> uses the trigram index and is refused on strings under 3 characters</td>
+</tr>
+<tr>
+<td>Sorts use an index or a bounded sort</td>
+<td>large sorts spill to disk</td>
+<td><code>order_by</code> accepts indexed fields only (<code>updated_at</code>, <code>created_at</code>, typed property columns, <code>_rank</code>) plus the <code>id</code> tiebreak</td>
+</tr>
+<tr>
+<td>Statement and transaction limits</td>
+<td>one bad query must not hold the primary</td>
+<td>app role: <code>statement_timeout</code> 2 s, <code>idle_in_transaction_session_timeout</code> 10 s, <code>lock_timeout</code> 1 s</td>
+</tr>
+<tr>
+<td>Reads on the replica when configured</td>
+<td>the primary is reserved for writes</td>
+<td><code>Query</code>, <code>List*</code> and public routes use the replica DSN; <code>wait_for_seq</code> falls back to the primary</td>
+</tr>
+<tr>
+<td>Every generated query shape has a committed <code>EXPLAIN</code> fixture</td>
+<td>regressions are caught before release</td>
+<td>CI runs <code>EXPLAIN (ANALYZE, BUFFERS)</code> against the seeded 600K-block workspace and fails on any sequential scan of <code>blocks</code>, <code>block_properties</code> or <code>block_edges</code></td>
+</tr>
+</tbody>
+</table>
+<p>The write side is short by construction: one materializer transaction holds an advisory lock for one doc, performs one <code>UPDATE</code> and three <code>INSERT</code>s, and commits in under 5 ms; nothing else runs inside it.</p>
+<h3 id="explain-and-validate">Explain and validate</h3>
+<p><code>Validate(cel)</code> returns type errors and the resolved property and type ids. <code>Explain(cel)</code> (admin) returns the generated SQL with parameters redacted and the Postgres plan summary, which is how slow saved views get diagnosed.</p>
+<h3 id="logseq-simple-query-translation">Logseq simple-query translation</h3>
+<p>The importer translates <code>{{query …}}</code> clauses: <code>(and …)</code>, <code>(or …)</code>, <code>(not …)</code>, <code>[[page]]</code> → <code>refs(page)</code>, <code>(task TODO DOING)</code> → <code>props.status in […]</code>, <code>(priority A)</code> → <code>props.priority == 'A'</code>, <code>(property k v)</code> → <code>props.k == v</code>, <code>(between …)</code> → journal date range, <code>(namespace x)</code> → <code>descendant_of(x)</code>, <code>(page-property …)</code> → page-level props, <code>(sort-by …)</code> → <code>order_by</code>. Untranslatable clauses keep the raw text and set <code>view.props.translation = "partial"</code>.</p>
+<h2 id="9-markdown-and-mdx-import-and-export-publishing">9. Markdown and MDX, import and export, publishing</h2>
+<p>The Markdown engine guarantees that parse → serialize → parse is identity and that serialization is deterministic; anything it does not model survives byte-exact as a raw node. Publishing renders the same block tree to HTML, Markdown or JSON at a public URL.</p>
+<h3 id="engine">Engine</h3>
+<ul>
+<li>Parser: goldmark with extensions producing an mdast-compatible AST (the remark ecosystem's node vocabulary), so JSON exported from the API can be consumed by unified/remark tooling unchanged; the web app ships the same rules in TypeScript with a shared conformance fixture set.</li>
+<li>Dialects, all on by default: CommonMark 0.31; GFM (tables, task lists, strikethrough, footnotes, autolinks); Logseq (<code>key:: value</code> properties, <code>[[page]]</code>, <code>((block))</code>, <code>{{embed}}</code>, <code>{{query}}</code>, <code>#+BEGIN_…</code> org blocks, <code>TODO</code>/<code>DOING</code>/… markers, <code>SCHEDULED:</code>/<code>DEADLINE:</code>, <code>:LOGBOOK:</code>); Obsidian (wikilinks with <code>|alias</code> and <code>#heading</code>, <code>^block-id</code>, <code>&gt; [!callout]</code>, <code>![[embed]]</code>, YAML frontmatter); math (<code>$…$</code>, <code>$$…$$</code>); MDX (<code>import</code>/<code>export</code>, JSX flow and text elements, <code>{expressions}</code>).</li>
+<li>Storage: a block's content is its Markdown source in a <code>LoroText</code>. The mdast AST is derived from it for rendering, search, edges and properties and is never stored as truth. Loro's rich-text marks are reserved for the R2 WYSIWYG editor.</li>
+<li>Node kinds the parser models: paragraph, heading(1–6), list item (bullet, ordered, task), code (lang, meta), blockquote, callout, table, math, image, embed, raw (html or unknown), mdx_esm, mdx_jsx_flow, mdx_jsx_text, mdx_expression; inline: strong, em, code, strike, highlight, link, wikilink, blockref, tag, math, footnote_ref.</li>
+<li>Serializer: one canonical form per node (ATX headings, <code>-</code> bullets, fenced code with backticks, pipe tables with aligned columns, <code>key:: value</code> properties after the first line in outliner format, frontmatter in markdown format). Raw nodes are written back verbatim including surrounding blank lines.</li>
+<li>Source maps: each block records <code>src_line</code> and a byte span at import time; export writes blocks in tree order.</li>
+</ul>
+<h3 id="page-formats">Page formats</h3>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Block rule</th>
+<th>Serialized as</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>markdown</code> (default)</td>
+<td>every top-level mdast node is a block; headings nest content beneath them by level</td>
+<td>ordinary Markdown with YAML frontmatter for page properties</td>
+</tr>
+<tr>
+<td><code>outliner</code></td>
+<td>every list item is a block; nested items are children</td>
+<td><code>-</code> outline with <code>key:: value</code> properties, the shape Logseq and outliner-style Obsidian files use</td>
+</tr>
+</tbody>
+</table>
+<p><code>PagesService.Convert(page_id, format)</code> rewrites <code>meta.format</code>; the tree is unchanged. API-created pages default to <code>markdown</code>. Import chooses <code>outliner</code> only when a file body is a single top-level list, else <code>markdown</code>; the caller can force either.</p>
+<h3 id="import">Import</h3>
+<p><code>PagesService.ImportFolder(project_id, upload_id, options)</code> runs as a job and returns a report. Steps: unzip; classify files (<code>.md</code>, <code>.mdx</code>, assets, <code>logseq/config.edn</code>, <code>pages/</code>, <code>journals/</code>, <code>assets/</code>); create property definitions on demand with kinds inferred from values (<code>number</code>, <code>date</code>, <code>checkbox</code>, <code>url</code>, else <code>text</code>; <code>alias</code>, <code>tags</code> → the built-in behaviors); create pages by file name and Logseq namespace rules; create blocks; upload assets with content-hash dedup and rewrite links; honor <code>id::</code> and <code>^id</code> as block ids; second pass resolves <code>[[links]]</code>, <code>((refs))</code> and creates missing pages; translate simple queries; create publications for <code>public:: true</code> when <code>options.publish = true</code>.</p>
+<p>The report lists per file: blocks created, raw nodes and their kinds, unresolved links, translated and partial queries, property kind inferences, and any file the parser refused (none by design: a file that fails to parse is imported as one raw block and flagged).</p>
+<h3 id="export">Export</h3>
+<p><code>PagesService.ExportMarkdown(page_id, include_children)</code> and <code>ProjectsService.Export(project_id)</code> produce a zip in the same layout the importer accepts (<code>pages/</code>, <code>journals/</code>, <code>work/</code>, <code>assets/</code>, <code>views/</code>), deterministic across runs so two exports of an unchanged project are byte-identical. Every doc-owning block exports as one <code>.md</code> file whose frontmatter carries <code>type:</code> (the type name, e.g. <code>task</code>) and, for numbered types, <code>key:</code> (e.g. <code>KB-123</code>); the importer reads both back, so a round trip preserves work items and their keys. Property ids are written as names; unknown-to-definition props keep their imported key.</p>
+<h3 id="mdx-policy">MDX policy</h3>
+<p>MDX nodes are preserved and returned in the block JSON with their raw source. Publishing renders them as a placeholder (<code>&lt;div data-mdx="…"&gt;</code>) in HTML and verbatim in Markdown. Component evaluation is code execution and is R2, in an isolated Node render service with a per-workspace component allowlist; nothing in the Go node ever evaluates JSX.</p>
+<h3 id="publishing">Publishing</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PublicationsService.Create(page_id, slug, mode, include_children, expires_at)</code></td>
+<td><code>slug</code> defaults to a normalized title; <code>live</code> follows the page, <code>snapshot</code> pins <code>pinned_seq</code> for the page doc and each included child doc; writes <code>doc:D#viewer@user:*</code> for every included doc</td>
+</tr>
+<tr>
+<td><code>Update(mode, slug)</code></td>
+<td>slug changes keep a 301 from the old slug for 90 days</td>
+</tr>
+<tr>
+<td><code>Revoke</code></td>
+<td>removes the public tuples; the URL returns 404; the <code>uri</code> keeps resolving for authorized callers</td>
+</tr>
+<tr>
+<td>Boundaries</td>
+<td>a restricted boundary inside a published page is excluded unless it carries its own public grant</td>
+</tr>
+<tr>
+<td>Expiry</td>
+<td>a job revokes expired publications hourly</td>
+</tr>
+</tbody>
+</table>
+<p>Public routes, no authentication, cached 60 s at the edge for <code>live</code> and immutable for <code>snapshot</code>:</p>
+<pre><code>GET /p/{workspace_slug}/{slug}         text/html      server-rendered, no JavaScript required
+GET /p/{workspace_slug}/{slug}.md      text/markdown  canonical serialization
+GET /p/{workspace_slug}/{slug}.json    application/json  block tree, Block shape
+GET /r/{block_id}                      302 → /p/…#b-{block_id} when published, else 401 unless authenticated
+GET /a/{asset_id}                      asset bytes for published pages; signed URL otherwise
+</code></pre>
+<p>HTML rendering uses a fixed template: title, optional icon, breadcrumbs when <code>include_children</code>, the tree with anchors <code>b-{block_id}</code> on every block, and <code>&lt;link rel="canonical"&gt;</code> to the <code>.md</code> variant. Embeds of unpublished targets render as "embedded content not public". Every published response carries <code>X-KB-Seq</code> (the seq it was rendered from).</p>
+<h3 id="uris">URIs</h3>
+<p><code>uri = kb://{workspace_id}/{block_id}</code> is assigned at block creation and never changes. <code>public_url</code> is present while the block's page is published. <code>PagesService.Get</code> and <code>QueryService.Query</code> return both on every block.</p>
+<h2 id="10-mcp">10. MCP</h2>
+<p>The node ships an MCP server at <code>/mcp</code> (streamable HTTP), authenticated with OAuth 2.1 per the MCP authorization specification (2026-07-28 revision) or with a pre-minted agent token. Every tool call runs as the agent principal and as its owner, is scope-filtered, and is audited. There is no stdio transport and no CLI: local clients on the R2 desktop app use the same HTTP endpoint on localhost.</p>
+<h3 id="transports-and-authentication">Transports and authentication</h3>
+<table>
+<thead>
+<tr>
+<th>Transport</th>
+<th>Who uses it</th>
+<th>Auth</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST /mcp</code> streamable HTTP</td>
+<td>Claude, ChatGPT, Cursor, VS Code, remote agents</td>
+<td>OAuth 2.1: <code>401</code> with <code>WWW-Authenticate: Bearer resource_metadata=…</code>; <code>/.well-known/oauth-protected-resource/mcp</code> names the node's own authorization server; PKCE; Client ID Metadata Documents supported, dynamic client registration accepted for older clients; RFC 8707 <code>resource</code> required; tokens audience-bound to this node's MCP URL and rejected otherwise</td>
+</tr>
+<tr>
+<td><code>POST /mcp</code> with <code>Authorization: Bearer kba_…</code></td>
+<td>headless agents, CI, scripts, local clients on the R2 desktop app</td>
+<td>agent token minted by <code>AgentsService.CreateToken</code></td>
+</tr>
+</tbody>
+</table>
+<p>The authorization server is part of <code>api</code>: <code>/oauth/authorize</code> renders a minimal HTML page that performs SIWE through a wallet in the browser (RainbowKit-compatible message flow) or accepts a local-key signature, then a consent screen listing the requested scopes (workspace, projects, pages; read or write; tools). Consent mints an <code>agent</code> principal with <code>owner = user</code>, writes its scope tuples, and issues an access token (1 h) and refresh token (30 d) bound to that agent. Revoking the agent token revokes the OAuth grant.</p>
+<h3 id="tools">Tools</h3>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Input</th>
+<th>Output</th>
+<th>Permission</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>search_blocks</code></td>
+<td><code>cel</code>, <code>project_id?</code>, <code>limit ≤ 100</code>, <code>include_text</code></td>
+<td>blocks with <code>markdown</code>, <code>props</code>, <code>uri</code>, <code>page_title</code></td>
+<td><code>can_view</code> per row</td>
+</tr>
+<tr>
+<td><code>get_page</code></td>
+<td><code>page_id</code> or <code>uri</code>, <code>format: markdown | tree</code>, <code>depth ≤ 10</code></td>
+<td>page content</td>
+<td><code>can_view</code></td>
+</tr>
+<tr>
+<td><code>get_block</code></td>
+<td><code>block_id</code>, <code>depth</code></td>
+<td>block subtree</td>
+<td><code>can_view</code></td>
+</tr>
+<tr>
+<td><code>get_backlinks</code></td>
+<td><code>block_id</code>, <code>limit</code></td>
+<td>referencing blocks</td>
+<td><code>can_view</code> per row</td>
+</tr>
+<tr>
+<td><code>list_projects</code></td>
+<td>—</td>
+<td>projects the agent can view</td>
+<td><code>can_view</code></td>
+</tr>
+<tr>
+<td><code>list_types</code></td>
+<td><code>project_id</code></td>
+<td>types and property definitions</td>
+<td><code>can_view</code></td>
+</tr>
+<tr>
+<td><code>create_page</code></td>
+<td><code>project_id</code>, <code>title</code>, <code>markdown</code>, <code>parent_page_id?</code></td>
+<td>page</td>
+<td><code>can_edit</code> on project</td>
+</tr>
+<tr>
+<td><code>append_blocks</code></td>
+<td><code>page_id</code>, <code>parent_block_id?</code>, <code>markdown</code></td>
+<td>created block ids</td>
+<td><code>can_edit</code></td>
+</tr>
+<tr>
+<td><code>update_block</code></td>
+<td><code>block_id</code>, <code>markdown?</code>, <code>props?</code>, <code>if_version?</code></td>
+<td>block</td>
+<td><code>can_edit</code>, <code>writer</code> per property</td>
+</tr>
+<tr>
+<td><code>set_type</code></td>
+<td><code>block_id</code>, <code>type_id</code></td>
+<td>block or <code>SchemaViolation</code></td>
+<td><code>can_edit</code> + <code>change_type</code></td>
+</tr>
+<tr>
+<td><code>publish_page</code></td>
+<td><code>page_id</code>, <code>mode</code></td>
+<td>url</td>
+<td><code>can_publish</code></td>
+</tr>
+</tbody>
+</table>
+<p>Tool schemas are generated from the same protobuf messages as the API, so a field added to the API appears in MCP automatically. Write tools are disabled unless the token's scopes include a write role and <code>tools[]</code> lists them.</p>
+<h3 id="resources-and-prompts">Resources and prompts</h3>
+<ul>
+<li>Resources: <code>kb://{workspace_id}/{block_id}</code> returns the block or page as Markdown with <code>text/markdown</code>; <code>resources/list</code> enumerates the agent's viewable projects and their root pages; subscriptions map to <code>EventsService</code> so a client can watch a page.</li>
+<li>Prompts: none in R1.</li>
+</ul>
+<h3 id="scoping-and-safety">Scoping and safety</h3>
+<ul>
+<li>Effective permission = agent scope ∩ owner permission, enforced by the double check on every call.</li>
+<li><code>search_blocks</code> and <code>get_backlinks</code> apply the same <code>doc_access</code> filter as the API; an agent never sees a block its owner cannot.</li>
+<li>Response size cap 1 MB per call; <code>get_page</code> truncates with <code>truncated: true</code> and a <code>next_cursor</code>.</li>
+<li>Tool calls carry <code>X-Request-Id</code>; audit rows record token id, owner, tool, resource ids, <code>seq</code> written, and duration.</li>
+<li>Rate limit per agent token as in section 4; a burst of failures (10 in 1 min) disables the token for 15 min and emits <code>agent.throttled</code>.</li>
+</ul>
+<h3 id="self-host-and-desktop-r2-specifics">Self-host and desktop (R2) specifics</h3>
+<p>On self-host, the HTTP endpoint is the same URL as the API, so one Ingress rule and one certificate serve both. On the R2 desktop app, the sidecar exposes <code>/mcp</code> on <code>127.0.0.1</code> with a per-install bearer token, which is what Claude Desktop, Cursor and VS Code configure as a remote MCP server.</p>
+<h2 id="11-minimal-web-app">11. Minimal web app</h2>
+<p>R1 ships one minimal web app whose only job is collaborative editing: sign in, pick a workspace and project, open pages and work items, edit blocks together with live cursors, keep working offline, reconnect and converge. Its navigation is Documents · Work in R1, with Canvas added in R2. It is embedded in the server binary and served at <code>/app</code>, and it is sized for 10 concurrent users across 20 docs with several editors per doc, a small fraction of what the backend supports. It is an API client and a <code>SyncService</code> client and nothing more; the scope table is the contract, and anything not in it is R2.</p>
+<h3 id="scope">Scope</h3>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>R1</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sign-in</td>
+<td>yes</td>
+<td>SIWE through RainbowKit (wagmi) for wallets; a local <code>did:key</code> generated with WebCrypto and stored non-extractable in IndexedDB for users without a wallet</td>
+</tr>
+<tr>
+<td>Workspace and project picker</td>
+<td>yes</td>
+<td><code>WorkspacesService.List</code>, <code>ProjectsService.List</code>; create workspace and project</td>
+</tr>
+<tr>
+<td>Documents surface</td>
+<td>yes</td>
+<td>page list from <code>Query</code> with <code>is_page</code> sorted by <code>updated_at</code>; create page; open today's journal</td>
+</tr>
+<tr>
+<td>Work surface</td>
+<td>yes</td>
+<td>list of <code>is_a('work')</code> blocks with key, title, type and <code>status</code>; create a work item (type, title) which opens its own doc; filter by type and status; no boards or kanban</td>
+</tr>
+<tr>
+<td>Block editor</td>
+<td>yes</td>
+<td>block tree; one CodeMirror 6 instance for the focused block, bound to that block's <code>LoroText</code> by loro-codemirror; unfocused blocks render from Markdown client-side with the same mdast rules the server uses</td>
+</tr>
+<tr>
+<td>Structure editing</td>
+<td>yes</td>
+<td>Enter splits, Backspace at line start joins, drag reorders, all as <code>tree.move</code> plus text ops; in <code>outliner</code> pages Tab and Shift-Tab reparent; in <code>markdown</code> pages hierarchy follows heading levels and Tab is disabled</td>
+</tr>
+<tr>
+<td>Presence</td>
+<td>yes</td>
+<td>cursors, selections, display name and a color derived from the DID hash, via awareness frames</td>
+</tr>
+<tr>
+<td>Offline</td>
+<td>yes</td>
+<td>local Loro doc plus a pending update queue in IndexedDB; offline banner; reconnect runs <code>Pull</code> then flushes the queue</td>
+</tr>
+<tr>
+<td>Links</td>
+<td>yes</td>
+<td><code>[[page]]</code> and <code>KB-123</code> autocomplete; click navigates; an unresolved link creates the page on first save</td>
+</tr>
+<tr>
+<td>Backlinks and search</td>
+<td>yes</td>
+<td><code>ListEdges(IN)</code> panel; search box over <code>search()</code></td>
+</tr>
+<tr>
+<td>Share and publish</td>
+<td>yes</td>
+<td>invite by DID, share link, publish toggle showing the public URL</td>
+</tr>
+<tr>
+<td>Version history</td>
+<td>read-only</td>
+<td><code>ListVersions</code>, <code>GetVersion</code> preview, <code>RestoreVersion</code></td>
+</tr>
+<tr>
+<td>Canvas surface</td>
+<td>no</td>
+<td>R2</td>
+</tr>
+<tr>
+<td>Rich-text toolbar, WYSIWYG marks</td>
+<td>no</td>
+<td>R2</td>
+</tr>
+<tr>
+<td>Views, boards, kanban</td>
+<td>no</td>
+<td>R2</td>
+</tr>
+<tr>
+<td>Comments, mobile layout</td>
+<td>no</td>
+<td>R2</td>
+</tr>
+</tbody>
+</table>
+<h3 id="architecture">Architecture</h3>
+<ul>
+<li>React and TypeScript, Vite build; assets embedded in the Go binary, content-hashed, served at <code>/app</code> with immutable caching; <code>index.html</code> carries <code>KB_PUBLIC_URL</code> and feature flags.</li>
+<li>API access through Connect-web clients generated from <code>kb.v1</code>, cached with TanStack Query. The web app is one more API client and gets no private endpoints.</li>
+<li><code>@kb/sync-client</code> (TypeScript, published for third parties): one WebSocket per tab multiplexing up to 20 docs; per doc a <code>LoroDoc</code>, <code>lastSeq</code>, a pending queue, and an IndexedDB store holding a shallow snapshot every 500 local ops plus the tail; imports are order-agnostic; a <code>seq</code> gap triggers <code>Pull</code>; awareness through Loro's ephemeral store with a 30 s TTL; local pushes coalesce for 50 ms.</li>
+<li>Rendering: unfocused blocks render through the same mdast rules as the server, kept identical by a shared TypeScript and Go conformance fixture set; the focused block is raw Markdown source in CodeMirror.</li>
+<li>Encryption on the device: plaintext arrives over TLS and lives in memory while a doc is open; the IndexedDB store is encrypted with AES-256-GCM under a per-device key that never leaves the device — a non-extractable WebCrypto key in the browser, <code>safeStorage</code> in the OS keychain in the R2 desktop app — and is cleared on sign-out. Non-extractable is an API property, not a storage one, so in the browser the cache is only as safe as the disk; on the desktop app the keychain makes it real.</li>
+</ul>
+<h3 id="security">Security</h3>
+<ul>
+<li>Access token in memory; refresh token in an <code>httpOnly</code>, <code>SameSite=Strict</code> cookie scoped to <code>/rpc</code> and <code>/ws</code>; a custom request header on every Connect call defeats CSRF; the WebSocket sends the access token in its first frame, never in the URL.</li>
+<li>CSP <code>default-src 'self'; connect-src 'self' wss:; img-src 'self' data:</code>; wallet connector libraries are bundled, no third-party scripts at runtime, no analytics.</li>
+<li>Rendered Markdown passes through the same allowlist sanitizer the publisher uses; raw HTML nodes are escaped.</li>
+</ul>
+<h3 id="performance-budget">Performance budget</h3>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Budget</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Initial JS</td>
+<td>≤ 300 KB gzipped; wallet connectors lazy-loaded</td>
+</tr>
+<tr>
+<td>Open a 2,000-block page</td>
+<td>&lt; 200 ms after first load (IndexedDB snapshot), &lt; 800 ms cold</td>
+</tr>
+<tr>
+<td>Remote keystroke visible</td>
+<td>p95 &lt; 200 ms on LAN, &lt; 500 ms over WAN</td>
+</tr>
+<tr>
+<td>Memory per open doc</td>
+<td>&lt; 20 MB for 2,000 blocks</td>
+</tr>
+<tr>
+<td>Server side at 10 users, 20 docs</td>
+<td>≤ 20 rooms, about 50 pushes/s, ≤ 20 frames/s per client; under 1 % of one <code>sync</code> process</td>
+</tr>
+</tbody>
+</table>
+<p>The Playwright collaboration suite (section 14) runs 10 browser contexts against 20 docs with scripted concurrent edits and three clients offline for five minutes, then asserts identical Markdown per doc, no lost updates (server <code>doc_updates</code> count equals the sum of client op counts), and presence visible within 1 s.</p>
+<h2 id="12-api-reference">12. API reference</h2>
+<p>The API is one protobuf package, <code>kb.v1</code>, served by Connect: gRPC, gRPC-Web and JSON over HTTP at <code>POST /rpc/kb.v1.&lt;Service&gt;/&lt;Method&gt;</code>, with read methods also mapped to <code>GET</code> routes through <code>google.api.http</code> annotations. All fields below are protobuf field names; JSON uses them as written.</p>
+<h3 id="conventions">Conventions</h3>
+<table>
+<thead>
+<tr>
+<th>Convention</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Authentication</td>
+<td><code>Authorization: Bearer &lt;access_token | kba_token&gt;</code>; public routes in section 9 excepted</td>
+</tr>
+<tr>
+<td>Workspace scoping</td>
+<td>every request message carries <code>workspace_id</code>; mismatch with the token's scope → <code>PERMISSION_DENIED</code></td>
+</tr>
+<tr>
+<td>Idempotency</td>
+<td>mutations accept <code>Idempotency-Key</code> (UUID); same key + same request hash within 24 h → stored response; same key + different hash → <code>ABORTED</code></td>
+</tr>
+<tr>
+<td>Concurrency</td>
+<td>updates accept <code>if_version</code> (page <code>seq</code>); mismatch → <code>FAILED_PRECONDITION</code> with <code>VersionConflict{current_version}</code></td>
+</tr>
+<tr>
+<td>Pagination</td>
+<td>keyset only: <code>page_size</code> (default 50, max 500) and an opaque <code>cursor</code> encoding the sort keys; used by every <code>List*</code>, <code>ListChildren</code>, <code>ListEdges</code>, <code>ListVersions</code>, <code>ListAudit</code> and <code>Query</code>; no <code>offset</code> field exists in <code>kb.v1</code></td>
+</tr>
+<tr>
+<td>Counts</td>
+<td>never returned by default; <code>count_mode: ESTIMATE</code> or <code>CAPPED</code> (10,000 cap) on <code>Query</code> and <code>List*</code> when a caller needs one</td>
+</tr>
+<tr>
+<td>Freshness</td>
+<td>responses over projections carry <code>indexed_seq</code>; reads accept <code>wait_for_seq {doc_id, seq}</code> with a 5 s cap</td>
+</tr>
+<tr>
+<td>Timestamps</td>
+<td>RFC 3339 UTC</td>
+</tr>
+<tr>
+<td>IDs</td>
+<td>UUIDv7 as lowercase hex with hyphens; DIDs as strings</td>
+</tr>
+<tr>
+<td>Field masks</td>
+<td><code>Update*</code> methods take <code>update_mask</code>; unset fields are untouched</td>
+</tr>
+<tr>
+<td>Deprecation</td>
+<td><code>Deprecation</code> and <code>Sunset</code> headers; 12-month notice; <code>kb.v2</code> runs beside <code>kb.v1</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="error-model">Error model</h3>
+<p>Connect codes with typed details in <code>google.rpc.Status.details</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Detail type</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>INVALID_ARGUMENT</code></td>
+<td><code>BadRequest.FieldViolation[]</code></td>
+<td>validation</td>
+</tr>
+<tr>
+<td><code>INVALID_ARGUMENT</code></td>
+<td><code>CelError{line, col, message, symbol}</code></td>
+<td>query compile</td>
+</tr>
+<tr>
+<td><code>FAILED_PRECONDITION</code></td>
+<td><code>VersionConflict{current_version}</code></td>
+<td><code>if_version</code> mismatch</td>
+</tr>
+<tr>
+<td><code>FAILED_PRECONDITION</code></td>
+<td><code>SchemaViolation{missing_required[], invalid[{property_id, reason}]}</code></td>
+<td><code>SetType</code>, <code>SetProperties</code></td>
+</tr>
+<tr>
+<td><code>PERMISSION_DENIED</code></td>
+<td><code>PermissionDenied{permission, resource, as_owner: bool}</code></td>
+<td>any check failure</td>
+</tr>
+<tr>
+<td><code>NOT_FOUND</code></td>
+<td><code>ResourceInfo</code></td>
+<td>unknown id or not visible (indistinguishable by design)</td>
+</tr>
+<tr>
+<td><code>RESOURCE_EXHAUSTED</code></td>
+<td><code>QuotaFailure</code></td>
+<td>rate limit, query cost, size limits</td>
+</tr>
+<tr>
+<td><code>ABORTED</code></td>
+<td><code>ErrorInfo{reason: IDEMPOTENCY_MISMATCH}</code></td>
+<td>idempotency</td>
+</tr>
+<tr>
+<td><code>UNAVAILABLE</code></td>
+<td><code>RetryInfo</code></td>
+<td>room migrating, object store unreachable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="core-messages">Core messages</h3>
+<pre><code class="language-proto">message Block {
+  string id = 1; string workspace_id = 2; string project_id = 3; string page_id = 4; string doc_id = 5;
+  string parent_block_id = 6; string rank = 7; string type_id = 8;
+  string markdown = 9;                       // this block's own content
+  google.protobuf.Struct props = 10;         // keyed by property id
+  repeated string path = 11;                 // ancestor block ids, root first
+  int64 version = 12;                        // page seq at last change
+  string uri = 13; string public_url = 14;
+  bool compliant = 15; google.protobuf.Struct invalid_props = 16;
+  bool restricted = 17;                      // this block is a boundary
+  google.protobuf.Timestamp created_at = 18; google.protobuf.Timestamp updated_at = 19;
+  string created_by = 20; string updated_by = 21;
+  string key = 22;                           // KB-123 for numbered types, else empty
+  bool owns_doc = 23;                        // page, work item, or any doc-owning type
+}
+message Page {
+  string id = 1; string project_id = 2; string doc_id = 3; string title = 4; string icon = 5;
+  string parent_page_id = 6; string journal_date = 7; PageFormat format = 8; string type_id = 9;
+  google.protobuf.Struct props = 10; int64 version = 11; string uri = 12; string public_url = 13;
+  string key = 14;
+  google.protobuf.Timestamp created_at = 15; google.protobuf.Timestamp updated_at = 16;
+}
+message Edge { string source_block_id = 1; string target_block_id = 2; EdgeKind kind = 3;
+               string relation_type_id = 4; EdgeOrigin origin = 5; string target_title = 6; }
+message Grant { string principal = 1; string role = 2; string resource_type = 3; string resource_id = 4;
+                string condition = 5; google.protobuf.Struct condition_params = 6; }
+message Publication { string id = 1; string page_id = 2; string slug = 3; PublicationMode mode = 4;
+                      int64 pinned_seq = 5; bool include_children = 6; string url = 7;
+                      google.protobuf.Timestamp expires_at = 8; }
+</code></pre>
+<h3 id="services">Services</h3>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Methods</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AuthService</code></td>
+<td><code>Challenge</code>, <code>Verify</code>, <code>Refresh</code>, <code>Revoke</code>, <code>RegisterDevice</code>, <code>ListDevices</code>, <code>RevokeDevice</code>, <code>Me</code></td>
+</tr>
+<tr>
+<td><code>AgentsService</code></td>
+<td><code>CreateToken</code>, <code>ListTokens</code>, <code>RevokeToken</code>, <code>GetToken</code></td>
+</tr>
+<tr>
+<td><code>WorkspacesService</code></td>
+<td><code>Create</code>, <code>Get</code>, <code>List</code>, <code>Update</code>, <code>RotateKey</code>, <code>Export</code>, <code>Delete</code> (admin, 30-day trash)</td>
+</tr>
+<tr>
+<td><code>MembersService</code></td>
+<td><code>Invite</code>, <code>ListInvites</code>, <code>RevokeInvite</code>, <code>AcceptInvite</code>, <code>List</code>, <code>UpdateRole</code>, <code>Remove</code></td>
+</tr>
+<tr>
+<td><code>GroupsService</code></td>
+<td><code>Create</code>, <code>AddMember</code>, <code>RemoveMember</code>, <code>List</code>, <code>Delete</code></td>
+</tr>
+<tr>
+<td><code>ShareLinksService</code></td>
+<td><code>Create</code>, <code>List</code>, <code>Revoke</code>, <code>Redeem</code></td>
+</tr>
+<tr>
+<td><code>PermissionsService</code></td>
+<td><code>Check</code>, <code>Grant</code>, <code>Revoke</code>, <code>ListGrants</code>, <code>Effective</code></td>
+</tr>
+<tr>
+<td><code>PolicyService</code></td>
+<td><code>GetScheme</code>, <code>UpdateScheme</code>, <code>ListSchemeVersions</code>, <code>Explain</code></td>
+</tr>
+<tr>
+<td><code>ProjectsService</code></td>
+<td><code>Create</code>, <code>Get</code>, <code>List</code>, <code>Update</code>, <code>Archive</code>, <code>Export</code></td>
+</tr>
+<tr>
+<td><code>SchemaService</code></td>
+<td><code>CreateType</code>, <code>UpdateType</code>, <code>ListTypes</code>, <code>DeleteType</code>, <code>CreateProperty</code>, <code>UpdateProperty</code>, <code>ListProperties</code>, <code>CreateRelationType</code>, <code>ListRelationTypes</code></td>
+</tr>
+<tr>
+<td><code>PagesService</code></td>
+<td><code>Create</code>, <code>Get</code>, <code>List</code>, <code>Update</code>, <code>Move</code>, <code>Trash</code>, <code>Restore</code>, <code>Purge</code>, <code>Journal</code>, <code>Convert</code>, <code>ListVersions</code>, <code>GetVersion</code>, <code>RestoreVersion</code>, <code>ImportFolder</code>, <code>GetImportReport</code>, <code>ExportMarkdown</code></td>
+</tr>
+<tr>
+<td><code>BlocksService</code></td>
+<td><code>Get</code>, <code>Batch</code>, <code>Create</code>, <code>Update</code>, <code>SetProperties</code>, <code>SetType</code>, <code>Move</code>, <code>Delete</code>, <code>ListChildren</code>, <code>ListEdges</code>, <code>Restrict</code>, <code>Unrestrict</code>, <code>Duplicate</code></td>
+</tr>
+<tr>
+<td><code>AssetsService</code></td>
+<td><code>CreateUpload</code>, <code>Get</code>, <code>Delete</code></td>
+</tr>
+<tr>
+<td><code>QueryService</code></td>
+<td><code>Query</code>, <code>Validate</code>, <code>Explain</code></td>
+</tr>
+<tr>
+<td><code>PublicationsService</code></td>
+<td><code>Create</code>, <code>Get</code>, <code>List</code>, <code>Update</code>, <code>Revoke</code></td>
+</tr>
+<tr>
+<td><code>SyncService</code></td>
+<td><code>Open</code>, <code>Push</code>, <code>Pull</code>, <code>Subscribe</code> (server stream); same messages over WebSocket at <code>/ws/sync</code></td>
+</tr>
+<tr>
+<td><code>EventsService</code></td>
+<td><code>Subscribe</code> (server stream), <code>ListAudit</code>, <code>VerifyAudit</code></td>
+</tr>
+<tr>
+<td><code>AdminService</code></td>
+<td><code>Health</code>, <code>Stats</code>, <code>Reindex</code>, <code>Compact</code>, <code>Verify</code>, <code>RotateNodeKey</code>, <code>ExportNodeKey</code>, <code>ListJobs</code>, <code>RetryJob</code> (node operator token)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="sync-wire-messages">Sync wire messages</h3>
+<pre><code class="language-proto">service SyncService {
+  rpc Open(OpenRequest) returns (OpenResponse);              // snapshot + tail since client seq
+  rpc Push(PushRequest) returns (PushAck);                   // updates → seqs
+  rpc Pull(PullRequest) returns (PullResponse);              // updates since seq
+  rpc Subscribe(SubscribeRequest) returns (stream SyncFrame);
+}
+message SyncFrame {                          // also the WebSocket frame at /ws/sync
+  oneof kind {
+    Hello hello = 1;                         // first client frame: access token, client_id
+    OpenRequest open = 2;  OpenResponse opened = 3;
+    PushRequest push = 4;  PushAck ack = 5;
+    PullRequest pull = 6;  PullResponse pulled = 7;
+    Update update = 8;     Awareness awareness = 9;
+    SyncError error = 10;
+  }
+}
+message OpenRequest  { string doc_id = 1; int64 since_seq = 2; }
+message OpenResponse { string doc_id = 1; bytes snapshot = 2; int64 snapshot_seq = 3;
+                       repeated Update tail = 4; int64 current_seq = 5; string sync_url = 6; }
+message PushRequest  { string doc_id = 1; string client_id = 2; repeated ClientUpdate updates = 3; }
+message ClientUpdate { int64 client_seq = 1; bytes update = 2; }
+message PushAck      { string doc_id = 1; repeated AckedUpdate acked = 2; }
+message AckedUpdate  { int64 client_seq = 1; int64 seq = 2; }
+message PullRequest  { string doc_id = 1; int64 since_seq = 2; }
+message PullResponse { string doc_id = 1; repeated Update updates = 2; int64 current_seq = 3; }
+message Update       { string doc_id = 1; int64 seq = 2; bytes update = 3; string actor = 4; }
+message Awareness    { string doc_id = 1; bytes state = 2; }   // Loro ephemeral store bytes, TTL 30 s
+message SyncError    { string doc_id = 1; string code = 2; string message = 3; }
+</code></pre>
+<p><code>update</code> bytes are Loro updates as exported by <code>LoroDoc.export({ mode: "update", from })</code>; the room never inspects them beyond the header. <code>sync_url</code> on <code>OpenResponse</code> tells a browser which <code>sync</code> process to connect to on Kubernetes; with <code>KB_ROLE=all</code> it is the node's own URL.</p>
+<h3 id="method-contracts-worth-spelling-out">Method contracts worth spelling out</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Request</th>
+<th>Response</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PagesService.Create</code></td>
+<td><code>project_id</code>, <code>title</code>, <code>type_id?</code> (any doc-owning type, default <code>page</code>), <code>parent_page_id?</code>, <code>props?</code>, <code>markdown?</code>, <code>format?</code></td>
+<td><code>Page</code> + created <code>blocks[]</code></td>
+<td><code>markdown</code> is parsed with the page format rules; a numbered type receives its <code>key</code> in the same transaction; a duplicate normalized title is allowed and flagged <code>title_conflict</code></td>
+</tr>
+<tr>
+<td><code>PagesService.Get</code></td>
+<td><code>page_id | uri | key</code>, <code>format: TREE | MARKDOWN</code>, <code>depth?</code>, <code>expand_embeds?</code></td>
+<td><code>Page</code>, <code>blocks[]</code> or <code>markdown</code></td>
+<td>boundaries the caller cannot view come back as portal blocks</td>
+</tr>
+<tr>
+<td><code>BlocksService.Batch</code></td>
+<td><code>page_id</code>, <code>ops[] ≤ 500</code>, <code>if_version?</code></td>
+<td><code>results[]</code> mirroring <code>ops[]</code>, <code>version</code></td>
+<td>atomic; op kinds <code>create</code>, <code>update</code>, <code>set_props</code>, <code>set_type</code>, <code>move</code>, <code>delete</code></td>
+</tr>
+<tr>
+<td><code>BlocksService.Create</code></td>
+<td><code>page_id</code>, <code>parent_block_id</code>, <code>position {after | FIRST | LAST}</code>, <code>markdown</code>, <code>props?</code>, <code>type_id?</code></td>
+<td><code>blocks[]</code></td>
+<td><code>markdown</code> may contain several list items; each becomes a block; a doc-owning <code>type_id</code> creates the doc and, if numbered, the key</td>
+</tr>
+<tr>
+<td><code>BlocksService.Move</code></td>
+<td><code>block_ids[]</code>, <code>target_page_id</code>, <code>parent_block_id</code>, <code>position</code></td>
+<td><code>version</code> per touched page</td>
+<td>cross-page keeps ids and grants; a cross-project move issues a new key and keeps the old one as an alias</td>
+</tr>
+<tr>
+<td><code>BlocksService.SetType</code></td>
+<td><code>block_id</code>, <code>type_id</code>, <code>if_version?</code></td>
+<td><code>Block</code></td>
+<td>applies defaults; missing required → <code>SchemaViolation</code> unless <code>allow_incomplete = true</code> (then <code>compliant = false</code>); promotion to a numbered type allocates the key; a doc-owning type splits the subtree into its own doc</td>
+</tr>
+<tr>
+<td><code>BlocksService.Restrict</code></td>
+<td><code>block_id</code>, <code>inherit: bool</code></td>
+<td><code>doc_id</code></td>
+<td>see section 6</td>
+</tr>
+<tr>
+<td><code>QueryService.Query</code></td>
+<td>section 8</td>
+<td>section 8</td>
+<td></td>
+</tr>
+<tr>
+<td><code>MembersService.Invite</code></td>
+<td><code>did | address</code>, <code>role</code>, <code>expires_at?</code></td>
+<td><code>Invite{id, accept_url}</code></td>
+<td><code>accept_url</code> is a deep link <code>kb://invite/{id}</code>; no email is sent</td>
+</tr>
+<tr>
+<td><code>AgentsService.CreateToken</code></td>
+<td><code>name</code>, <code>scopes[]</code>, <code>tools[]</code>, <code>expires_at?</code></td>
+<td><code>token</code> (once), <code>Agent</code></td>
+<td>each scope validated by a check as the caller</td>
+</tr>
+<tr>
+<td><code>PolicyService.UpdateScheme</code></td>
+<td><code>scheme</code>, <code>if_version</code></td>
+<td><code>version</code>, <code>fga_model_id</code></td>
+<td>compile errors returned as <code>INVALID_ARGUMENT</code> with paths</td>
+</tr>
+<tr>
+<td><code>ProjectsService.Update</code></td>
+<td><code>project_id</code>, <code>key_prefix?</code></td>
+<td><code>Project</code></td>
+<td>prefix change applies to new keys only; existing keys keep their prefix</td>
+</tr>
+<tr>
+<td><code>EventsService.Subscribe</code></td>
+<td><code>project_id?</code>, <code>kinds[]</code>, <code>since_cursor?</code></td>
+<td>stream <code>Event</code></td>
+<td>heartbeat every 15 s; reconnect with the last cursor</td>
+</tr>
+</tbody>
+</table>
+<h3 id="limits_1">Limits</h3>
+<table>
+<thead>
+<tr>
+<th>Limit</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Block markdown</td>
+<td>100 KB</td>
+</tr>
+<tr>
+<td>Blocks per page</td>
+<td>20,000</td>
+</tr>
+<tr>
+<td>Page doc size</td>
+<td>20 MB</td>
+</tr>
+<tr>
+<td>Batch ops</td>
+<td>500</td>
+</tr>
+<tr>
+<td>Asset size</td>
+<td>250 MB (configurable)</td>
+</tr>
+<tr>
+<td>Properties per block</td>
+<td>200</td>
+</tr>
+<tr>
+<td>Boundaries per page</td>
+<td>200</td>
+</tr>
+<tr>
+<td>Import archive</td>
+<td>2 GB</td>
+</tr>
+<tr>
+<td>Request body</td>
+<td>8 MB (uploads use presigned URLs)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="versioning-and-compatibility">Versioning and compatibility</h3>
+<p><code>kb.v1</code> accepts only additive changes: new fields, new methods, new enum values. Clients must ignore unknown fields and unknown enum values. The <code>.proto</code> files, generated OpenAPI 3.1, and MCP tool schemas are published from one CI job so the three never drift.</p>
+<h2 id="13-operations">13. Operations</h2>
+<p>A self-hoster can install with one Compose file or one Helm chart, upgrade with one command, restore from backup in under 30 minutes, and see every SLO on a bundled dashboard. Desktop inherits all of this with the operator role played by the app.</p>
+<h3 id="configuration">Configuration</h3>
+<p>All settings are environment variables with a <code>kb.yaml</code> equivalent; Helm renders both from values. Secrets never appear in <code>kb.yaml</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Purpose</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>KB_ROLE</code></td>
+<td><code>all</code>, <code>api</code>, <code>sync</code>, <code>worker</code></td>
+<td><code>all</code></td>
+</tr>
+<tr>
+<td><code>KB_PUBLIC_URL</code></td>
+<td>external base URL; used for SIWE domain, OAuth issuer, publication URLs, web app config</td>
+<td>required</td>
+</tr>
+<tr>
+<td><code>KB_SYNC_URL</code></td>
+<td>external WebSocket base for sync when it differs from <code>KB_PUBLIC_URL</code> (separate Ingress)</td>
+<td><code>KB_PUBLIC_URL</code></td>
+</tr>
+<tr>
+<td><code>KB_LISTEN</code></td>
+<td><code>:8080</code> or <code>unix:///path</code></td>
+<td><code>:8080</code></td>
+</tr>
+<tr>
+<td><code>KB_BOOTSTRAP_ADMIN_DID</code></td>
+<td>DID granted the node-operator role and admin of the first workspace</td>
+<td>required on first start</td>
+</tr>
+<tr>
+<td><code>KB_DATABASE_URL</code>, <code>KB_FGA_DATABASE_URL</code>, <code>KB_RIVER_DATABASE_URL</code></td>
+<td>Postgres DSNs; may point at one server with three databases</td>
+<td>required</td>
+</tr>
+<tr>
+<td><code>KB_NATS_URL</code></td>
+<td>NATS cluster; <code>embedded</code> runs the in-process server (desktop, R2)</td>
+<td>required</td>
+</tr>
+<tr>
+<td><code>KB_S3_ENDPOINT</code>, <code>KB_S3_BUCKET</code>, <code>KB_S3_ACCESS_KEY</code>, <code>KB_S3_SECRET_KEY</code>, <code>KB_S3_REGION</code></td>
+<td>object storage, any S3-compatible endpoint (SeaweedFS bundled), path-style addressing; every object is node-encrypted regardless of store settings</td>
+<td>required</td>
+</tr>
+<tr>
+<td><code>KB_NODE_KEY_FILE</code> + <code>KB_NODE_KEY_PASSPHRASE</code>, or <code>KB_NODE_KEY_KMS</code></td>
+<td>node key custody: sealed file with passphrase, or a cloud KMS key that unwraps the sealed file; the key is generated at first start</td>
+<td>required</td>
+</tr>
+<tr>
+<td><code>KB_EVM_RPC_URL</code></td>
+<td>chain RPC for EIP-1271 verification</td>
+<td>none (contract wallets refused)</td>
+</tr>
+<tr>
+<td><code>KB_SESSION_TTL</code>, <code>KB_REFRESH_TTL</code></td>
+<td>token lifetimes</td>
+<td><code>15m</code>, <code>720h</code></td>
+</tr>
+<tr>
+<td><code>KB_LIMITS_*</code></td>
+<td>per-limit overrides (section 12)</td>
+<td>defaults</td>
+</tr>
+<tr>
+<td><code>KB_OTEL_EXPORTER_OTLP_ENDPOINT</code></td>
+<td>traces and metrics</td>
+<td>none</td>
+</tr>
+</tbody>
+</table>
+<h3 id="install">Install</h3>
+<table>
+<thead>
+<tr>
+<th>Target</th>
+<th>Steps</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compose</td>
+<td><code>curl -O compose.yaml</code>; set <code>KB_PUBLIC_URL</code>, <code>KB_NODE_KEY_PASSPHRASE</code>, <code>KB_BOOTSTRAP_ADMIN_DID</code>; <code>docker compose up -d</code>. Services: the server, <code>postgres:16</code>, <code>nats:2</code>, SeaweedFS (<code>weed server -s3</code>, one container), pgBackRest sidecar. At first start the server generates its node key, runs migrations, creates the bucket with default encryption, and waits for the bootstrap DID to sign in at <code>/app</code>; that DID's first <code>WorkspacesService.Create</code> (or the web app's create-workspace screen) creates the workspace. No commands other than <code>docker compose</code>.</td>
+</tr>
+<tr>
+<td>Kubernetes</td>
+<td><code>helm install kb oci://…/kb -f values.yaml</code>; the chart ships CloudNativePG, NATS and SeaweedFS sub-charts (each switchable to external, Ceph RGW via Rook documented for large clusters), migrations run at startup by the first pod to take the migration advisory lock, Ingress with WebSocket support, PodDisruptionBudgets, HPA for <code>api</code>, <code>sync</code> and <code>worker</code>, and a KEDA scaler for <code>worker</code> on River queue depth</td>
+</tr>
+<tr>
+<td>Desktop (R2)</td>
+<td>app launch; the sidecar initializes Postgres, embedded NATS, the FGA store, the node key in the keychain, the filesystem object-store backend, and the local user's <code>did:key</code></td>
+</tr>
+</tbody>
+</table>
+<p>Reference Helm sizing for 10K users and 600K blocks: <code>api</code> 3 × (1 vCPU, 1 GB), <code>sync</code> 2 × (1 vCPU, 2 GB), <code>worker</code> 3 × (2 vCPU, 2 GB), NATS 3 × (0.5 vCPU, 1 GB), Postgres primary 8 vCPU / 32 GB with one streaming replica, MinIO or external S3. The 10-user collaboration target runs on the Compose profile with no tuning.</p>
+<h3 id="postgres-tuning-and-pooling">Postgres tuning and pooling</h3>
+<p>The chart and the Compose bundle ship pgbouncer in transaction mode (app role; pool 40 per <code>api</code> pod, 20 per <code>worker</code> pod). RLS works under transaction pooling because <code>app.workspace_id</code> is set with <code>SET LOCAL</code> inside each transaction. <code>pg_stat_statements</code> is enabled and its top queries appear on the bundled dashboard. Settings the chart applies for the reference sizing:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Value</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>shared_buffers</code></td>
+<td>25 % of RAM</td>
+<td>standard</td>
+</tr>
+<tr>
+<td><code>effective_cache_size</code></td>
+<td>75 % of RAM</td>
+<td>planner accuracy</td>
+</tr>
+<tr>
+<td><code>random_page_cost</code></td>
+<td>1.1</td>
+<td>SSD storage</td>
+</tr>
+<tr>
+<td><code>work_mem</code></td>
+<td>32 MB on the query role, 8 MB default</td>
+<td>bounded sorts</td>
+</tr>
+<tr>
+<td><code>maintenance_work_mem</code></td>
+<td>1 GB</td>
+<td>index builds during reindex</td>
+</tr>
+<tr>
+<td><code>max_wal_size</code></td>
+<td>4 GB</td>
+<td>fewer checkpoints under ingest</td>
+</tr>
+<tr>
+<td><code>wal_compression</code></td>
+<td>off</td>
+<td>ciphertext does not compress</td>
+</tr>
+<tr>
+<td><code>synchronous_commit</code></td>
+<td>on</td>
+<td>durability before ack; group commit amortizes fsync</td>
+</tr>
+<tr>
+<td><code>autovacuum_max_workers</code></td>
+<td>6</td>
+<td>update-heavy <code>blocks</code> and <code>docs</code></td>
+</tr>
+<tr>
+<td><code>statement_timeout</code> (app role)</td>
+<td>2 s</td>
+<td>section 8 rules</td>
+</tr>
+<tr>
+<td><code>idle_in_transaction_session_timeout</code></td>
+<td>10 s</td>
+<td>no lingering locks</td>
+</tr>
+<tr>
+<td><code>track_io_timing</code></td>
+<td>on</td>
+<td>dashboard</td>
+</tr>
+</tbody>
+</table>
+<h3 id="upgrades">Upgrades</h3>
+<ul>
+<li>Images are tagged by semver; the binary refuses to start against a newer schema than it knows.</li>
+<li>Migrations are forward-only SQL embedded in the binary (goose library) and run at startup under an advisory lock, so any number of replicas can start together; every migration is tested against a snapshot of the previous release's data in CI.</li>
+<li>Projections may be rebuilt by a migration through <code>AdminService.Reindex</code> without downtime, because reads fall back to the previous projection until <code>indexed_seq</code> catches up.</li>
+<li>Rolling upgrades on Kubernetes: <code>worker</code> first, then <code>api</code>, then <code>sync</code> (rooms rebuild from the log; clients reconnect and <code>Pull</code>).</li>
+<li>Web app assets are versioned with the binary; a stale tab detects the version change on its next request and reloads after flushing its pending queue.</li>
+<li>Desktop (R2): Postgres major upgrades run dump-and-restore of truth tables, then reindex; the previous data directory is kept until the new one passes a checksum verification.</li>
+</ul>
+<h3 id="backup-and-restore">Backup and restore</h3>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Compose</th>
+<th>Kubernetes</th>
+<th>Desktop (R2)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Postgres</td>
+<td>pgBackRest sidecar with <code>repo1-cipher-type=aes-256-cbc</code> (client-side, passphrase derived from the node key): nightly base backup, continuous WAL archiving to the bucket; retention 14 days</td>
+<td>CloudNativePG Barman Cloud plugin with SSE-C (Barman 3.20+; key derived from the node key, held in a Secret): scheduled base backups and WAL archiving to the bucket</td>
+<td>nightly <code>WorkspacesService.Export</code> archive to a local folder or S3 (truth tables plus the key ring wrapped to the user's device key)</td>
+</tr>
+<tr>
+<td>Object storage</td>
+<td>bucket versioning + lifecycle; every object already ciphertext</td>
+<td>same</td>
+<td>in the export archive</td>
+</tr>
+<tr>
+<td>Node key</td>
+<td>operator responsibility; <code>AdminService.ExportNodeKey</code> returns a sealed copy; without it, backups are unreadable</td>
+<td>Secret backup via the cluster's secret store</td>
+<td>keychain; sealed export through <code>AdminService.ExportNodeKey</code></td>
+</tr>
+</tbody>
+</table>
+<p>Restore drill (documented, scripted, tested quarterly in CI): restore Postgres to a point in time, restore object storage, start the server with the node key, call <code>AdminService.Verify</code> (audit chain, snapshot decrypt sample, FGA store consistency), then <code>AdminService.Reindex</code> if any projection lags. Target RTO 30 minutes, RPO 5 minutes.</p>
+<h3 id="observability">Observability</h3>
+<ul>
+<li>OpenTelemetry traces for every RPC, job and NATS publish; W3C trace context propagated through <code>X-Request-Id</code>.</li>
+<li>Prometheus metrics at <code>/metrics</code>: RPC latency and errors by method, materializer lock wait, <code>doc_updates</code> insert rate, outbox lag, index job lag (<code>now - oldest unindexed seq time</code>), compaction backlog, room count and fan-out messages, FGA check latency and cache hit rate, query cost histogram, key unwrap count.</li>
+<li>Structured JSON logs; no content, no tokens, no DIDs beyond a salted hash in access logs.</li>
+<li>Bundled Grafana dashboards and alert rules ship in the chart and Compose bundle.</li>
+</ul>
+<h3 id="slos-and-alerts">SLOs and alerts</h3>
+<table>
+<thead>
+<tr>
+<th>SLO</th>
+<th>Target</th>
+<th>Alert</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>API availability</td>
+<td>99.9 % monthly</td>
+<td>error rate &gt; 1 % for 5 min</td>
+</tr>
+<tr>
+<td>Write latency</td>
+<td>p95 &lt; 50 ms, p99 &lt; 200 ms</td>
+<td>p95 &gt; 100 ms for 10 min</td>
+</tr>
+<tr>
+<td>Query latency</td>
+<td>p95 &lt; 100 ms</td>
+<td>p95 &gt; 250 ms for 10 min</td>
+</tr>
+<tr>
+<td>Sync propagation (push to fan-out)</td>
+<td>p95 &lt; 100 ms server-side</td>
+<td>p95 &gt; 300 ms for 10 min</td>
+</tr>
+<tr>
+<td>Sync availability</td>
+<td>99.9 % monthly; reconnect within 5 s</td>
+<td>WebSocket error rate &gt; 1 %</td>
+</tr>
+<tr>
+<td>Index lag</td>
+<td>p95 &lt; 1 s</td>
+<td>&gt; 10 s for 5 min</td>
+</tr>
+<tr>
+<td>Outbox lag</td>
+<td>&lt; 1 s</td>
+<td>&gt; 30 s</td>
+</tr>
+<tr>
+<td>Compaction backlog</td>
+<td>0 docs over threshold for &gt; 1 h</td>
+<td>&gt; 100 docs</td>
+</tr>
+<tr>
+<td>Backup freshness</td>
+<td>&lt; 24 h base, &lt; 5 min WAL</td>
+<td>missed schedule</td>
+</tr>
+</tbody>
+</table>
+<h3 id="security-controls">Security controls</h3>
+<table>
+<thead>
+<tr>
+<th>Threat</th>
+<th>Control</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Cross-tenant read</td>
+<td><code>workspace_id</code> predicate in every query + RLS policy + isolation test suite</td>
+</tr>
+<tr>
+<td>Stolen database dump</td>
+<td>history encrypted with per-workspace keys; the query index relies on volume encryption, stated as such; backups encrypted by the backup tool</td>
+</tr>
+<tr>
+<td>Stolen or compromised object store</td>
+<td>every object is node-produced ciphertext with opaque keys; the store holds no plaintext, no titles, no key material; CI plaintext scan on every write path</td>
+</tr>
+<tr>
+<td>Stolen laptop</td>
+<td>IndexedDB cache encrypted under a per-device key; keychain-backed on the desktop app; sessions revocable per device</td>
+</tr>
+<tr>
+<td>Stolen token</td>
+<td>15-minute access tokens, rotating refresh with reuse detection, agent token revocation, audience-bound MCP tokens</td>
+</tr>
+<tr>
+<td>Malicious update from a sync client</td>
+<td>header validation, size caps, quarantine at compaction, per-token rate limits</td>
+</tr>
+<tr>
+<td>CEL injection</td>
+<td>typed compilation to parameterized SQL; cost caps; timeouts</td>
+</tr>
+<tr>
+<td>SSRF via embeds or MDX</td>
+<td>no server-side fetch of user URLs; <code>embed_url</code> rendered client-side only</td>
+</tr>
+<tr>
+<td>Published-page XSS</td>
+<td>HTML rendered from the AST with an allowlist; raw HTML nodes escaped; CSP <code>default-src 'none'; img-src 'self'</code></td>
+</tr>
+<tr>
+<td>Supply chain</td>
+<td>pinned Go modules with <code>go.sum</code> verification, SBOM per release, signed images (cosign), signed and notarized desktop binaries</td>
+</tr>
+<tr>
+<td>Privilege escalation via scheme</td>
+<td>compiler refuses removal of the last admin and roles broader than their assignable level; scheme versions audited</td>
+</tr>
+<tr>
+<td>Agent overreach</td>
+<td>double check as owner; tool allowlist; audit rows; throttling on failure bursts</td>
+</tr>
+</tbody>
+</table>
+<h2 id="14-testing-build-plan-open-decisions">14. Testing, build plan, open decisions</h2>
+<p>R1 is complete when the conformance suites below pass on the Compose and Kubernetes profiles in CI, and the acceptance criteria from section 1 are met by the k6 suites against the reference sizing.</p>
+<h3 id="test-suites">Test suites</h3>
+<table>
+<thead>
+<tr>
+<th>Suite</th>
+<th>What it proves</th>
+<th>Runs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tree materialization (TypeScript + Go via FFI, shared fixtures)</td>
+<td>random concurrent create/move/delete sequences on the Loro tree materialize to the same block tree in both runtimes; fractional-index ties and cross-doc moves included</td>
+<td>every commit</td>
+</tr>
+<tr>
+<td>Collaboration (Playwright)</td>
+<td>10 browser contexts, 20 docs, scripted concurrent edits, 3 clients offline for 5 min; identical Markdown per doc afterwards, zero lost updates, presence visible within 1 s, remote keystroke p95 &lt; 200 ms</td>
+<td>every commit (reduced), nightly (full)</td>
+</tr>
+<tr>
+<td>Sync protocol</td>
+<td>gap detection, duplicate push ack, reconnect ordering, ACL revocation closing subscriptions, room failover between two <code>sync</code> processes</td>
+<td>every commit</td>
+</tr>
+<tr>
+<td>Markdown round-trip</td>
+<td>parse → serialize → parse identity and deterministic output on CommonMark 0.31, GFM, MDX and a Logseq/Obsidian corpus (≥ 2,000 files); TypeScript and Go renderers agree on the shared fixture set</td>
+<td>every commit</td>
+</tr>
+<tr>
+<td>Isolation</td>
+<td>every RPC with a foreign <code>workspace_id</code>, forged token, or revoked agent returns <code>NOT_FOUND</code> or <code>PERMISSION_DENIED</code>; zero rows leak under RLS with the app role</td>
+<td>every commit</td>
+</tr>
+<tr>
+<td>Scheme compiler</td>
+<td>200 scheme fixtures compile to models OpenFGA validates; negative fixtures are refused with the expected path</td>
+<td>every commit</td>
+</tr>
+<tr>
+<td>Access projection</td>
+<td>for 10K random grants, <code>doc_access</code> results equal FGA <code>Check</code> for every (principal, doc) pair sampled</td>
+<td>nightly</td>
+</tr>
+<tr>
+<td>CEL compiler</td>
+<td>every environment symbol against a seeded 100K-block workspace; generated SQL uses only bind parameters; cost cap and timeout paths</td>
+<td>every commit</td>
+</tr>
+<tr>
+<td>Materializer concurrency</td>
+<td>50 concurrent writers per page across 3 nodes; no lost update; <code>if_version</code> semantics hold</td>
+<td>nightly</td>
+</tr>
+<tr>
+<td>Compaction and quarantine</td>
+<td>corrupted updates are quarantined without losing later updates; snapshots decrypt at every retained seq</td>
+<td>nightly</td>
+</tr>
+<tr>
+<td>Import benchmark</td>
+<td>10K-file vault under 10 min; fidelity report reproducible</td>
+<td>nightly</td>
+</tr>
+<tr>
+<td>Load (k6)</td>
+<td>acceptance criteria on Compose reference (4 vCPU) and Kubernetes reference values</td>
+<td>nightly</td>
+</tr>
+<tr>
+<td>Web app budget</td>
+<td>bundle ≤ 300 KB gzipped; 2,000-block page open &lt; 200 ms warm</td>
+<td>every commit</td>
+</tr>
+<tr>
+<td>Restore drill</td>
+<td>scripted point-in-time restore + <code>AdminService.Verify</code> on the previous night's backup</td>
+<td>weekly</td>
+</tr>
+<tr>
+<td>Loro FFI</td>
+<td>update and snapshot bytes produced by the TypeScript client import cleanly in Go and vice versa, across the pinned Loro version and the previous one</td>
+<td>every commit</td>
+</tr>
+</tbody>
+</table>
+<p>The CEL differential test (section 8) runs on every commit: in-process cel-go evaluation and the SQL translation must agree on the seeded 100K-block workspace for the full fixture set, including expressions built to trigger error absorption.</p>
+<h3 id="build-plan">Build plan</h3>
+<p>Each milestone ends with its tests green on Compose; the order follows dependency, not priority. Weeks assume one engineer full time plus code generation; they are estimates, not commitments.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Milestone</th>
+<th>Contents</th>
+<th>Weeks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Skeleton</td>
+<td>repo, proto package, Connect server, embedded migrations, RLS, config via <code>KB_ROLE</code> and env, Compose file, OTel, CI</td>
+<td>2</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Identity</td>
+<td>DIDs, SIWE and local-key auth, sessions, devices, agent tokens, rate limits</td>
+<td>2</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Truth layer</td>
+<td>docs, updates, snapshots, encryption, key ring, node key custody, Loro FFI, materializer, <code>Batch</code></td>
+<td>3</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Tree and Markdown</td>
+<td>Loro tree materializer with shared fixtures; parser, serializer, page formats, round-trip suite</td>
+<td>3</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Projections</td>
+<td>outbox, poller, River jobs, indexer, compactor, pages/blocks/edges/properties, reindex</td>
+<td>3</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Authorization</td>
+<td>scheme compiler, FGA store per workspace, default scheme, boundaries, <code>doc_access</code>, <code>Explain</code></td>
+<td>3</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Sync</td>
+<td>rooms, <code>SyncService</code>, WebSocket transport, <code>@kb/sync-client</code> with IndexedDB persistence, protocol suite</td>
+<td>3</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Web app</td>
+<td>sign-in, pickers, page list, block editor, presence, offline, links, backlinks, search, share, publish, history; Playwright suite</td>
+<td>4</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Query</td>
+<td>CEL environment, compiler, cursors, limits, differential test, Logseq query translator</td>
+<td>2</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Sharing and publishing</td>
+<td>invites, groups, share links, publications, public routes, HTML renderer</td>
+<td>2</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Import and export</td>
+<td>folder import with report, export, assets</td>
+<td>2</td>
+</tr>
+<tr>
+<td>12</td>
+<td>MCP</td>
+<td>endpoint, OAuth AS, consent, tools from proto, audit</td>
+<td>2</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Kubernetes</td>
+<td>Helm chart with sub-charts, HPA, KEDA, dashboards, backup, restore drill</td>
+<td>2</td>
+</tr>
+<tr>
+<td>14</td>
+<td>Hardening</td>
+<td>load suites to acceptance, security review against section 13, docs</td>
+<td>2</td>
+</tr>
+</tbody>
+</table>
+<p>Total about 35 weeks serial; milestones 4, 6, 7 and 9 can overlap with 5 once the truth layer lands, and the web app (8) starts as soon as sync (7) has a working <code>Open</code> and <code>Push</code>. Desktop packaging moves to R2 with the Electron app, which reuses <code>@kb/sync-client</code> unchanged.</p>
+<h3 id="open-decisions">Open decisions</h3>
+<ul>
+<li>[ ] Confirm Yjs over Loro before milestone 3; switching later is a per-doc migration with history archived. Decided 2026-09-17: Loro, for the native movable tree and Rust core.</li>
+<li>[ ] Default page format for API-created pages: decided, <code>markdown</code>.</li>
+<li>[ ] <code>SyncService</code> in R1: decided, in R1, as the transport for the minimal web app. Command-line tooling: decided, none; every operator action is an <code>AdminService</code> RPC and migrations run at startup. Object store: decided, SeaweedFS as the bundled default with the S3 API as the contract; MinIO is out because its community edition was archived in April 2026. Work items: decided, the shipped base type <code>work</code> with <code>KB-123</code> keys is in R1. Encryption: decided, six rules in section 5; one key per workspace held by the node, client-held keys and device recipients removed for good, OpenBao Transit deferred until a customer asks.</li>
+<li>[ ] Contract-wallet support: require <code>KB_EVM_RPC_URL</code> for EIP-1271 or refuse contract wallets in R1.</li>
+<li>[ ] Audit log retention default: forever versus 1 year with export.</li>
+<li>[ ] Product name for the package prefix (<code>kb.v1</code>) and the URI scheme (<code>kb://</code>).</li>
+</ul>
+<h3 id="risks">Risks</h3>
+<table>
+<thead>
+<tr>
+<th>Risk</th>
+<th>Impact</th>
+<th>Mitigation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Loro is younger than Yjs, with fewer editor bindings, and Go reaches it through CGO</td>
+<td>editor integration effort; build complexity for desktop targets</td>
+<td>pin one Loro version per release, FFI cross-version test in CI, wazero WASM fallback for CGO-free builds, loro-codemirror is the only binding R1 needs</td>
+</tr>
+<tr>
+<td>SeaweedFS governance is effectively one lead maintainer; S3 edge cases lag AWS</td>
+<td>a bundled dependency could stall, as MinIO did</td>
+<td>the S3 API is the contract; the object-store suite runs against SeaweedFS, Ceph RGW and AWS S3 in CI; all objects are node-encrypted so a store swap is a copy, never a re-encryption</td>
+</tr>
+<tr>
+<td>The web app grows into a full editor</td>
+<td>R1 slips</td>
+<td>the scope table in section 11 is the contract; anything not listed is R2</td>
+</tr>
+<tr>
+<td>FGA changelog lag inflates <code>doc_access</code> staleness</td>
+<td>a revoked user sees rows for seconds</td>
+<td><code>Check</code> remains the gate for writes and opens; alert on projection lag &gt; 5 s</td>
+</tr>
+<tr>
+<td>Postgres primary saturation beyond reference sizing</td>
+<td>latency</td>
+<td>pgbouncer and replicas in the chart; workspace sharding path in the schema</td>
+</tr>
+<tr>
+<td>No CLI means every recovery path must exist as an RPC</td>
+<td>an operator locked out of the API cannot repair the node</td>
+<td><code>AdminService</code> accepts a node-operator token derived from the node key, independent of workspace auth; <code>Health</code> and <code>Verify</code> work before bootstrap</td>
+</tr>
+<tr>
+<td>Losing the node key loses backups</td>
+<td>unrecoverable disaster</td>
+<td><code>ExportNodeKey</code> at install is a documented step; <code>Verify</code> warns when no sealed export has been taken</td>
+</tr>
+<tr>
+<td>MDX evaluation demand before R2</td>
+<td>pressure to run JSX in the node</td>
+<td>placeholder rendering documented; render service scoped for R2</td>
+</tr>
+</tbody>
+</table>
+<p class="byline" style="margin-top:48px">Exported 2026-09-17 from the working specification (rev 36). Diagrams render with mermaid.js when online; their source is shown otherwise.</p>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.4.1/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'neutral', securityLevel: 'strict' });
+}
+</script>
+</body>
+</html>

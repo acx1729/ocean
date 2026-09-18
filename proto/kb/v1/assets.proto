@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package kb.v1;
+
+import "kb/v1/common.proto";
+
+option go_package = "github.com/acx1729/ocean/gen/kb/v1;kbv1";
+
+// Assets are uploaded to the node, which encrypts them before they reach object storage.
+service AssetsService {
+  rpc CreateUpload(CreateUploadRequest) returns (CreateUploadResponse);
+  rpc Get(GetAssetRequest) returns (GetAssetResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Delete(DeleteAssetRequest) returns (DeleteAssetResponse);
+}
+
+message CreateUploadRequest {
+  string workspace_id = 1;
+  string content_type = 2;
+  int64 size = 3;
+  // Hex SHA-256 of the plaintext, for content-hash dedup.
+  string sha256 = 4;
+  // Purpose: asset (default) or import archive.
+  string purpose = 5;
+}
+
+message CreateUploadResponse {
+  string upload_id = 1;
+  // PUT the bytes here with the given headers; the URL is single-use.
+  string url = 2;
+  string method = 3;
+  map<string, string> headers = 4;
+  // Set when the sha256 already exists in the workspace; no upload needed.
+  Asset existing = 5;
+}
+
+message GetAssetRequest {
+  string workspace_id = 1;
+  string asset_id = 2;
+}
+
+message GetAssetResponse {
+  Asset asset = 1;
+}
+
+message DeleteAssetRequest {
+  string workspace_id = 1;
+  string asset_id = 2;
+}
+
+message DeleteAssetResponse {}

@@ -1,0 +1,165 @@
+syntax = "proto3";
+
+package kb.v1;
+
+import "google/protobuf/timestamp.proto";
+import "kb/v1/common.proto";
+
+option go_package = "github.com/acx1729/ocean/gen/kb/v1;kbv1";
+
+// Identity is a public key expressed as a DID (section 4).
+service AuthService {
+  rpc Challenge(ChallengeRequest) returns (ChallengeResponse);
+  rpc Verify(VerifyRequest) returns (VerifyResponse);
+  rpc Refresh(RefreshRequest) returns (RefreshResponse);
+  rpc Revoke(RevokeRequest) returns (RevokeResponse);
+  rpc RegisterDevice(RegisterDeviceRequest) returns (RegisterDeviceResponse);
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc RevokeDevice(RevokeDeviceRequest) returns (RevokeDeviceResponse);
+  rpc Me(MeRequest) returns (MeResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+message ChallengeRequest {
+  string did = 1;
+}
+
+message ChallengeResponse {
+  string nonce = 1;
+  // Full SIWE (EIP-4361) message for did:pkh principals; empty for did:key.
+  string message = 2;
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+message DeviceRegistration {
+  string did = 1;
+  string display_name = 2;
+  // Owner's signature over the device's signing key (attestation).
+  bytes attestation = 3;
+}
+
+message VerifyRequest {
+  string did = 1;
+  string nonce = 2;
+  // Signature over the challenge message (SIWE) or over the nonce (did:key).
+  bytes signature = 3;
+  // The exact SIWE message that was signed, for did:pkh principals.
+  string message = 4;
+  DeviceRegistration device = 5;
+}
+
+message VerifyResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  google.protobuf.Timestamp access_expires_at = 3;
+  google.protobuf.Timestamp refresh_expires_at = 4;
+  Principal principal = 5;
+}
+
+message RefreshRequest {
+  string refresh_token = 1;
+}
+
+message RefreshResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  google.protobuf.Timestamp access_expires_at = 3;
+  google.protobuf.Timestamp refresh_expires_at = 4;
+}
+
+message RevokeRequest {
+  // Revoke this refresh token's session; when empty, the current session.
+  string refresh_token = 1;
+  // Revoke every session of the caller.
+  bool all = 2;
+}
+
+message RevokeResponse {}
+
+message RegisterDeviceRequest {
+  DeviceRegistration device = 1;
+  bytes signing_pubkey = 2;
+}
+
+message RegisterDeviceResponse {
+  Device device = 1;
+}
+
+message ListDevicesRequest {}
+
+message ListDevicesResponse {
+  repeated Device devices = 1;
+}
+
+message RevokeDeviceRequest {
+  string did = 1;
+}
+
+message RevokeDeviceResponse {}
+
+message MeRequest {}
+
+message MeResponse {
+  Principal principal = 1;
+  repeated Membership memberships = 2;
+  // Owner principal when the caller is an agent or a device.
+  Principal owner = 3;
+  string device_did = 4;
+  string session_id = 5;
+}
+
+// Scoped principals owned by a user; every check runs as the agent and as the owner.
+service AgentsService {
+  rpc CreateToken(CreateTokenRequest) returns (CreateTokenResponse);
+  rpc ListTokens(ListTokensRequest) returns (ListTokensResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
+  rpc GetToken(GetTokenRequest) returns (GetTokenResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+message CreateTokenRequest {
+  string workspace_id = 1;
+  string name = 2;
+  repeated Scope scopes = 3;
+  repeated string tools = 4;
+  google.protobuf.Timestamp expires_at = 5;
+}
+
+message CreateTokenResponse {
+  // Returned once.
+  string token = 1;
+  AgentToken agent = 2;
+}
+
+message ListTokensRequest {
+  string workspace_id = 1;
+  int32 page_size = 2;
+  string cursor = 3;
+}
+
+message ListTokensResponse {
+  repeated AgentToken tokens = 1;
+  string next_cursor = 2;
+}
+
+message RevokeTokenRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+
+message RevokeTokenResponse {}
+
+message GetTokenRequest {
+  string workspace_id = 1;
+  string id = 2;
+}
+
+message GetTokenResponse {
+  AgentToken agent = 1;
+}

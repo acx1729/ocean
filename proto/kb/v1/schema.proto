@@ -1,0 +1,124 @@
+syntax = "proto3";
+
+package kb.v1;
+
+import "google/protobuf/field_mask.proto";
+import "kb/v1/common.proto";
+
+option go_package = "github.com/acx1729/ocean/gen/kb/v1;kbv1";
+
+// User-defined types, properties and relation types (section 3).
+service SchemaService {
+  rpc CreateType(CreateTypeRequest) returns (CreateTypeResponse);
+  rpc UpdateType(UpdateTypeRequest) returns (UpdateTypeResponse);
+  rpc ListTypes(ListTypesRequest) returns (ListTypesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc DeleteType(DeleteTypeRequest) returns (DeleteTypeResponse);
+  rpc CreateProperty(CreatePropertyRequest) returns (CreatePropertyResponse);
+  rpc UpdateProperty(UpdatePropertyRequest) returns (UpdatePropertyResponse);
+  rpc ListProperties(ListPropertiesRequest) returns (ListPropertiesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc CreateRelationType(CreateRelationTypeRequest) returns (CreateRelationTypeResponse);
+  rpc ListRelationTypes(ListRelationTypesRequest) returns (ListRelationTypesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+message CreateTypeRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+  BlockType type = 3;
+}
+
+message CreateTypeResponse {
+  BlockType type = 1;
+}
+
+message UpdateTypeRequest {
+  string workspace_id = 1;
+  string type_id = 2;
+  BlockType type = 3;
+  google.protobuf.FieldMask update_mask = 4;
+}
+
+message UpdateTypeResponse {
+  BlockType type = 1;
+}
+
+message ListTypesRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+  int32 page_size = 3;
+  string cursor = 4;
+}
+
+message ListTypesResponse {
+  repeated BlockType types = 1;
+  string next_cursor = 2;
+}
+
+message DeleteTypeRequest {
+  string workspace_id = 1;
+  string type_id = 2;
+}
+
+message DeleteTypeResponse {}
+
+message CreatePropertyRequest {
+  string workspace_id = 1;
+  // Empty for a workspace-wide definition.
+  string project_id = 2;
+  PropertyDefinition property = 3;
+}
+
+message CreatePropertyResponse {
+  PropertyDefinition property = 1;
+}
+
+message UpdatePropertyRequest {
+  string workspace_id = 1;
+  string property_id = 2;
+  PropertyDefinition property = 3;
+  google.protobuf.FieldMask update_mask = 4;
+}
+
+message UpdatePropertyResponse {
+  PropertyDefinition property = 1;
+}
+
+message ListPropertiesRequest {
+  string workspace_id = 1;
+  // When set, returns project definitions plus workspace-wide ones.
+  string project_id = 2;
+  int32 page_size = 3;
+  string cursor = 4;
+}
+
+message ListPropertiesResponse {
+  repeated PropertyDefinition properties = 1;
+  string next_cursor = 2;
+}
+
+message CreateRelationTypeRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+  RelationType relation_type = 3;
+}
+
+message CreateRelationTypeResponse {
+  RelationType relation_type = 1;
+}
+
+message ListRelationTypesRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+  int32 page_size = 3;
+  string cursor = 4;
+}
+
+message ListRelationTypesResponse {
+  repeated RelationType relation_types = 1;
+  string next_cursor = 2;
+}

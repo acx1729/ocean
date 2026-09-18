@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package kb.v1;
+
+option go_package = "github.com/acx1729/ocean/gen/kb/v1;kbv1";
+
+// Transport for Loro clients (section 7). The same messages travel as SyncFrame over
+// one WebSocket per tab at /ws/sync, multiplexing docs.
+service SyncService {
+  // Snapshot plus tail since the client's seq.
+  rpc Open(OpenRequest) returns (OpenResponse);
+  // Updates → seqs.
+  rpc Push(PushRequest) returns (PushAck);
+  // Updates since seq.
+  rpc Pull(PullRequest) returns (PullResponse);
+  rpc Subscribe(SubscribeRequest) returns (stream SyncFrame);
+}
+
+message SyncFrame {
+  oneof kind {
+    // First client frame: access token, client_id.
+    Hello hello = 1;
+    OpenRequest open = 2;
+    OpenResponse opened = 3;
+    PushRequest push = 4;
+    PushAck ack = 5;
+    PullRequest pull = 6;
+    PullResponse pulled = 7;
+    Update update = 8;
+    Awareness awareness = 9;
+    SyncError error = 10;
+    Close close = 11;
+    Welcome welcome = 12;
+  }
+}
+
+message Hello {
+  string access_token = 1;
+  string client_id = 2;
+  string workspace_id = 3;
+}
+
+message Welcome {
+  string principal = 1;
+  string server_version = 2;
+}
+
+message OpenRequest {
+  string doc_id = 1;
+  int64 since_seq = 2;
+  string workspace_id = 3;
+}
+
+message OpenResponse {
+  string doc_id = 1;
+  bytes snapshot = 2;
+  int64 snapshot_seq = 3;
+  repeated Update tail = 4;
+  int64 current_seq = 5;
+  string sync_url = 6;
+}
+
+message ClientUpdate {
+  int64 client_seq = 1;
+  bytes update = 2;
+}
+
+message PushRequest {
+  string doc_id = 1;
+  string client_id = 2;
+  repeated ClientUpdate updates = 3;
+  string workspace_id = 4;
+}
+
+message AckedUpdate {
+  int64 client_seq = 1;
+  int64 seq = 2;
+}
+
+message PushAck {
+  string doc_id = 1;
+  repeated AckedUpdate acked = 2;
+}
+
+message PullRequest {
+  string doc_id = 1;
+  int64 since_seq = 2;
+  string workspace_id = 3;
+}
+
+message PullResponse {
+  string doc_id = 1;
+  repeated Update updates = 2;
+  int64 current_seq = 3;
+}
+
+message Update {
+  string doc_id = 1;
+  int64 seq = 2;
+  bytes update = 3;
+  string actor = 4;
+}
+
+// Loro ephemeral store bytes, TTL 30 s; never persisted.
+message Awareness {
+  string doc_id = 1;
+  bytes state = 2;
+  string peer = 3;
+}
+
+message SyncError {
+  string doc_id = 1;
+  string code = 2;
+  string message = 3;
+}
+
+message Close {
+  string doc_id = 1;
+  string reason = 2;
+}
+
+message SubscribeRequest {
+  string workspace_id = 1;
+  repeated string doc_ids = 2;
+  string client_id = 3;
+}

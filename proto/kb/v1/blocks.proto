@@ -1,0 +1,262 @@
+syntax = "proto3";
+
+package kb.v1;
+
+import "google/protobuf/struct.proto";
+import "kb/v1/common.proto";
+
+option go_package = "github.com/acx1729/ocean/gen/kb/v1;kbv1";
+
+service BlocksService {
+  rpc Get(GetBlockRequest) returns (GetBlockResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Batch(BatchRequest) returns (BatchResponse);
+  rpc Create(CreateBlockRequest) returns (CreateBlockResponse);
+  rpc Update(UpdateBlockRequest) returns (UpdateBlockResponse);
+  rpc SetProperties(SetPropertiesRequest) returns (SetPropertiesResponse);
+  rpc SetType(SetTypeRequest) returns (SetTypeResponse);
+  rpc Move(MoveBlocksRequest) returns (MoveBlocksResponse);
+  rpc Delete(DeleteBlocksRequest) returns (DeleteBlocksResponse);
+  rpc ListChildren(ListChildrenRequest) returns (ListChildrenResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc ListEdges(ListEdgesRequest) returns (ListEdgesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Restrict(RestrictRequest) returns (RestrictResponse);
+  rpc Unrestrict(UnrestrictRequest) returns (UnrestrictResponse);
+  rpc Duplicate(DuplicateRequest) returns (DuplicateResponse);
+}
+
+message GetBlockRequest {
+  string workspace_id = 1;
+  string block_id = 2;
+  int32 depth = 3;
+  repeated Include include = 4;
+  WaitForSeq wait_for_seq = 5;
+}
+
+message GetBlockResponse {
+  Block block = 1;
+  // Descendants in tree order when depth > 0.
+  repeated Block descendants = 2;
+  int64 indexed_seq = 3;
+}
+
+message CreateBlockRequest {
+  string workspace_id = 1;
+  string page_id = 2;
+  string parent_block_id = 3;
+  Position position = 4;
+  // May contain several list items; each becomes a block.
+  string markdown = 5;
+  google.protobuf.Struct props = 6;
+  string type_id = 7;
+  int64 if_version = 8;
+  // Client-chosen UUIDv7 for the first created block (optional).
+  string block_id = 9;
+}
+
+message CreateBlockResponse {
+  repeated Block blocks = 1;
+  int64 version = 2;
+}
+
+message UpdateBlockRequest {
+  string workspace_id = 1;
+  string block_id = 2;
+  string markdown = 3;
+  google.protobuf.Struct props = 4;
+  int64 if_version = 5;
+  // When false, props is merged; when true, props replaces the bag.
+  bool replace_props = 6;
+}
+
+message UpdateBlockResponse {
+  Block block = 1;
+  int64 version = 2;
+  int64 indexed_seq = 3;
+}
+
+message SetPropertiesRequest {
+  string workspace_id = 1;
+  string block_id = 2;
+  google.protobuf.Struct props = 3;
+  // Property ids to clear.
+  repeated string unset = 4;
+  int64 if_version = 5;
+}
+
+message SetPropertiesResponse {
+  Block block = 1;
+  int64 version = 2;
+}
+
+message SetTypeRequest {
+  string workspace_id = 1;
+  string block_id = 2;
+  string type_id = 3;
+  int64 if_version = 4;
+  // Accept missing required properties, marking the block non-compliant.
+  bool allow_incomplete = 5;
+}
+
+message SetTypeResponse {
+  Block block = 1;
+  int64 version = 2;
+}
+
+message MoveBlocksRequest {
+  string workspace_id = 1;
+  repeated string block_ids = 2;
+  string target_page_id = 3;
+  string parent_block_id = 4;
+  Position position = 5;
+  int64 if_version = 6;
+}
+
+message PageVersion {
+  string page_id = 1;
+  int64 version = 2;
+}
+
+message MoveBlocksResponse {
+  repeated PageVersion versions = 1;
+  repeated Block blocks = 2;
+}
+
+message DeleteBlocksRequest {
+  string workspace_id = 1;
+  repeated string block_ids = 2;
+  int64 if_version = 3;
+}
+
+message DeleteBlocksResponse {
+  int64 version = 1;
+}
+
+message ListChildrenRequest {
+  string workspace_id = 1;
+  string block_id = 2;
+  int32 page_size = 3;
+  string cursor = 4;
+  repeated Include include = 5;
+}
+
+message ListChildrenResponse {
+  repeated Block blocks = 1;
+  string next_cursor = 2;
+  int64 indexed_seq = 3;
+}
+
+message ListEdgesRequest {
+  string workspace_id = 1;
+  string block_id = 2;
+  EdgeDirection direction = 3;
+  EdgeKind kind = 4;
+  string relation_type_id = 5;
+  int32 page_size = 6;
+  string cursor = 7;
+  // Include the block on the other end of each edge.
+  bool include_blocks = 8;
+}
+
+message ListEdgesResponse {
+  repeated Edge edges = 1;
+  repeated Block blocks = 2;
+  string next_cursor = 3;
+}
+
+message RestrictRequest {
+  string workspace_id = 1;
+  string block_id = 2;
+  bool inherit = 3;
+}
+
+message RestrictResponse {
+  string doc_id = 1;
+  int64 version = 2;
+}
+
+message UnrestrictRequest {
+  string workspace_id = 1;
+  string block_id = 2;
+}
+
+message UnrestrictResponse {
+  int64 version = 1;
+}
+
+message DuplicateRequest {
+  string workspace_id = 1;
+  string block_id = 2;
+  string target_page_id = 3;
+  string parent_block_id = 4;
+  Position position = 5;
+}
+
+message DuplicateResponse {
+  repeated Block blocks = 1;
+  int64 version = 2;
+}
+
+// Batch: up to 500 operations on one page as a single Loro transaction and one seq.
+message BlockOp {
+  message Create {
+    string parent_block_id = 1;
+    Position position = 2;
+    string markdown = 3;
+    google.protobuf.Struct props = 4;
+    string type_id = 5;
+    string block_id = 6;
+  }
+  message Update {
+    string block_id = 1;
+    string markdown = 2;
+    google.protobuf.Struct props = 3;
+    bool replace_props = 4;
+  }
+  message SetProps {
+    string block_id = 1;
+    google.protobuf.Struct props = 2;
+    repeated string unset = 3;
+  }
+  message SetType {
+    string block_id = 1;
+    string type_id = 2;
+    bool allow_incomplete = 3;
+  }
+  message Move {
+    string block_id = 1;
+    string parent_block_id = 2;
+    Position position = 3;
+  }
+  message Delete {
+    string block_id = 1;
+  }
+  oneof op {
+    Create create = 1;
+    Update update = 2;
+    SetProps set_props = 3;
+    SetType set_type = 4;
+    Move move = 5;
+    Delete delete = 6;
+  }
+}
+
+message BlockOpResult {
+  repeated string block_ids = 1;
+}
+
+message BatchRequest {
+  string workspace_id = 1;
+  string page_id = 2;
+  repeated BlockOp ops = 3;
+  int64 if_version = 4;
+}
+
+message BatchResponse {
+  repeated BlockOpResult results = 1;
+  int64 version = 2;
+}

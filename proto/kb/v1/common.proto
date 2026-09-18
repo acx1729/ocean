@@ -1,0 +1,463 @@
+syntax = "proto3";
+
+package kb.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/acx1729/ocean/gen/kb/v1;kbv1";
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum PageFormat {
+  PAGE_FORMAT_UNSPECIFIED = 0;
+  PAGE_FORMAT_MARKDOWN = 1;
+  PAGE_FORMAT_OUTLINER = 2;
+}
+
+enum ContentFormat {
+  CONTENT_FORMAT_UNSPECIFIED = 0;
+  CONTENT_FORMAT_TREE = 1;
+  CONTENT_FORMAT_MARKDOWN = 2;
+}
+
+enum EdgeKind {
+  EDGE_KIND_UNSPECIFIED = 0;
+  EDGE_KIND_REF = 1;
+  EDGE_KIND_TAG = 2;
+  EDGE_KIND_EMBED = 3;
+  EDGE_KIND_RELATION = 4;
+}
+
+enum EdgeOrigin {
+  EDGE_ORIGIN_UNSPECIFIED = 0;
+  EDGE_ORIGIN_INLINE = 1;
+  EDGE_ORIGIN_PROPERTY = 2;
+}
+
+enum EdgeDirection {
+  EDGE_DIRECTION_UNSPECIFIED = 0;
+  EDGE_DIRECTION_OUT = 1;
+  EDGE_DIRECTION_IN = 2;
+}
+
+enum PublicationMode {
+  PUBLICATION_MODE_UNSPECIFIED = 0;
+  PUBLICATION_MODE_LIVE = 1;
+  PUBLICATION_MODE_SNAPSHOT = 2;
+}
+
+// Counts are never computed by default (section 8, Postgres performance rules).
+enum CountMode {
+  // The default: no count is computed.
+  COUNT_MODE_UNSPECIFIED = 0;
+  COUNT_MODE_ESTIMATE = 1;
+  COUNT_MODE_CAPPED = 2;
+}
+
+enum SortDirection {
+  SORT_DIRECTION_UNSPECIFIED = 0;
+  SORT_DIRECTION_ASC = 1;
+  SORT_DIRECTION_DESC = 2;
+}
+
+enum PropertyKind {
+  PROPERTY_KIND_UNSPECIFIED = 0;
+  PROPERTY_KIND_TEXT = 1;
+  PROPERTY_KIND_NUMBER = 2;
+  PROPERTY_KIND_DATE = 3;
+  PROPERTY_KIND_SELECT = 4;
+  PROPERTY_KIND_MULTI_SELECT = 5;
+  PROPERTY_KIND_RELATION = 6;
+  PROPERTY_KIND_USER = 7;
+  PROPERTY_KIND_CHECKBOX = 8;
+  PROPERTY_KIND_URL = 9;
+}
+
+enum PrincipalKind {
+  PRINCIPAL_KIND_UNSPECIFIED = 0;
+  PRINCIPAL_KIND_USER = 1;
+  PRINCIPAL_KIND_DEVICE = 2;
+  PRINCIPAL_KIND_AGENT = 3;
+  PRINCIPAL_KIND_LINK = 4;
+  PRINCIPAL_KIND_AUTOMATION = 5;
+  PRINCIPAL_KIND_NODE = 6;
+}
+
+enum ResourceType {
+  RESOURCE_TYPE_UNSPECIFIED = 0;
+  RESOURCE_TYPE_WORKSPACE = 1;
+  RESOURCE_TYPE_PROJECT = 2;
+  RESOURCE_TYPE_DOC = 3;
+  RESOURCE_TYPE_BLOCK = 4;
+  RESOURCE_TYPE_ATTRIBUTE_DEF = 5;
+}
+
+enum Include {
+  INCLUDE_UNSPECIFIED = 0;
+  INCLUDE_EDGES = 1;
+  INCLUDE_PAGE_TITLE = 2;
+  INCLUDE_CHILDREN = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Core resources
+// ---------------------------------------------------------------------------
+
+message Block {
+  string id = 1;
+  string workspace_id = 2;
+  string project_id = 3;
+  string page_id = 4;
+  string doc_id = 5;
+  string parent_block_id = 6;
+  string rank = 7;
+  string type_id = 8;
+  // This block's own Markdown content.
+  string markdown = 9;
+  // Property bag keyed by property definition id.
+  google.protobuf.Struct props = 10;
+  // Ancestor block ids, root first.
+  repeated string path = 11;
+  // Page seq at last change.
+  int64 version = 12;
+  string uri = 13;
+  string public_url = 14;
+  bool compliant = 15;
+  google.protobuf.Struct invalid_props = 16;
+  // This block is a permission boundary.
+  bool restricted = 17;
+  google.protobuf.Timestamp created_at = 18;
+  google.protobuf.Timestamp updated_at = 19;
+  string created_by = 20;
+  string updated_by = 21;
+  // KB-123 for numbered types, else empty.
+  string key = 22;
+  // Page, work item, or any doc-owning type.
+  bool owns_doc = 23;
+  // Populated when Include EDGES / PAGE_TITLE were requested.
+  repeated Edge edges = 24;
+  string page_title = 25;
+  // Plain text derived from markdown (search projection).
+  string text = 26;
+  int32 depth = 27;
+}
+
+message Page {
+  string id = 1;
+  string project_id = 2;
+  string doc_id = 3;
+  string title = 4;
+  string icon = 5;
+  string parent_page_id = 6;
+  string journal_date = 7;
+  PageFormat format = 8;
+  string type_id = 9;
+  google.protobuf.Struct props = 10;
+  int64 version = 11;
+  string uri = 12;
+  string public_url = 13;
+  string key = 14;
+  google.protobuf.Timestamp created_at = 15;
+  google.protobuf.Timestamp updated_at = 16;
+  string workspace_id = 17;
+  bool title_conflict = 18;
+  int64 indexed_seq = 19;
+  google.protobuf.Timestamp deleted_at = 20;
+}
+
+message Edge {
+  string source_block_id = 1;
+  string target_block_id = 2;
+  EdgeKind kind = 3;
+  string relation_type_id = 4;
+  EdgeOrigin origin = 5;
+  string target_title = 6;
+}
+
+message Grant {
+  string principal = 1;
+  string role = 2;
+  ResourceType resource_type = 3;
+  string resource_id = 4;
+  string condition = 5;
+  google.protobuf.Struct condition_params = 6;
+}
+
+message Publication {
+  string id = 1;
+  string page_id = 2;
+  string slug = 3;
+  PublicationMode mode = 4;
+  int64 pinned_seq = 5;
+  bool include_children = 6;
+  string url = 7;
+  google.protobuf.Timestamp expires_at = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp revoked_at = 10;
+  string created_by = 11;
+}
+
+message Workspace {
+  string id = 1;
+  string slug = 2;
+  string name = 3;
+  int32 current_key_version = 4;
+  int32 scheme_version = 5;
+  google.protobuf.Struct settings = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+  google.protobuf.Timestamp deleted_at = 9;
+  // The caller's role in this workspace, when listing.
+  string role = 10;
+}
+
+message Project {
+  string workspace_id = 1;
+  string id = 2;
+  string slug = 3;
+  string name = 4;
+  string root_page_id = 5;
+  string key_prefix = 6;
+  google.protobuf.Struct settings = 7;
+  google.protobuf.Timestamp archived_at = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+message Principal {
+  string did = 1;
+  PrincipalKind kind = 2;
+  string owner_did = 3;
+  string display_name = 4;
+  google.protobuf.Timestamp disabled_at = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+message Member {
+  Principal principal = 1;
+  string role = 2;
+  string invited_by = 3;
+  google.protobuf.Timestamp joined_at = 4;
+}
+
+message Membership {
+  Workspace workspace = 1;
+  string role = 2;
+}
+
+message Invite {
+  string id = 1;
+  string workspace_id = 2;
+  string did = 3;
+  string role = 4;
+  string created_by = 5;
+  google.protobuf.Timestamp expires_at = 6;
+  google.protobuf.Timestamp accepted_at = 7;
+  google.protobuf.Timestamp revoked_at = 8;
+  // Deep link kb://invite/{id}; no email is sent.
+  string accept_url = 9;
+}
+
+message ShareLink {
+  string id = 1;
+  ResourceType resource_type = 2;
+  string resource_id = 3;
+  string role = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  int32 max_uses = 6;
+  int32 uses = 7;
+  string created_by = 8;
+  google.protobuf.Timestamp revoked_at = 9;
+  bool allow_anonymous = 10;
+  // Full redeem URL; only returned by Create.
+  string url = 11;
+  google.protobuf.Timestamp created_at = 12;
+}
+
+message Group {
+  string id = 1;
+  string workspace_id = 2;
+  string name = 3;
+  repeated string member_dids = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message BlockType {
+  string id = 1;
+  string project_id = 2;
+  string name = 3;
+  string extends_type_id = 4;
+  bool collection_capable = 5;
+  bool owns_doc = 6;
+  bool numbered = 7;
+  repeated string required_props = 8;
+  // When allow_any_props is false, only allowed_props may be set.
+  repeated string allowed_props = 9;
+  bool allow_any_props = 10;
+  google.protobuf.Struct defaults = 11;
+  string icon = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+}
+
+message PropertyDefinition {
+  string id = 1;
+  // Empty for workspace-wide definitions.
+  string project_id = 2;
+  string name = 3;
+  PropertyKind kind = 4;
+  google.protobuf.Struct config = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message RelationType {
+  string id = 1;
+  string project_id = 2;
+  string name = 3;
+  string inverse_name = 4;
+  bool symmetric = 5;
+  bool dag = 6;
+  repeated string source_types = 7;
+  repeated string target_types = 8;
+}
+
+message Asset {
+  string id = 1;
+  string sha256 = 2;
+  int64 size = 3;
+  string content_type = 4;
+  string created_by = 5;
+  google.protobuf.Timestamp created_at = 6;
+  // Signed URL for authorized callers.
+  string url = 7;
+}
+
+message Version {
+  int64 seq = 1;
+  google.protobuf.Timestamp created_at = 2;
+  string actor = 3;
+  string named = 4;
+  bool snapshot = 5;
+}
+
+message Scope {
+  ResourceType resource_type = 1;
+  string resource_id = 2;
+  string role = 3;
+}
+
+message AgentToken {
+  string id = 1;
+  string principal_did = 2;
+  string owner_did = 3;
+  string name = 4;
+  repeated Scope scopes = 5;
+  repeated string tools = 6;
+  google.protobuf.Timestamp expires_at = 7;
+  google.protobuf.Timestamp last_used_at = 8;
+  google.protobuf.Timestamp revoked_at = 9;
+  google.protobuf.Timestamp created_at = 10;
+  string workspace_id = 11;
+}
+
+message Device {
+  string did = 1;
+  string display_name = 2;
+  google.protobuf.Timestamp created_at = 3;
+  google.protobuf.Timestamp last_seen_at = 4;
+  google.protobuf.Timestamp revoked_at = 5;
+}
+
+message Position {
+  oneof at {
+    string after = 1;
+    bool first = 2;
+    bool last = 3;
+  }
+}
+
+message WaitForSeq {
+  string doc_id = 1;
+  int64 seq = 2;
+}
+
+message OrderBy {
+  string field = 1;
+  SortDirection direction = 2;
+}
+
+message Count {
+  int64 value = 1;
+  bool capped = 2;
+  bool estimate = 3;
+}
+
+message Event {
+  string cursor = 1;
+  string kind = 2;
+  string workspace_id = 3;
+  string project_id = 4;
+  string doc_id = 5;
+  int64 seq = 6;
+  google.protobuf.Struct payload = 7;
+  string actor = 8;
+  google.protobuf.Timestamp at = 9;
+}
+
+message AuditEntry {
+  int64 id = 1;
+  google.protobuf.Timestamp at = 2;
+  string principal = 3;
+  string owner = 4;
+  string action = 5;
+  string resource_type = 6;
+  string resource_id = 7;
+  google.protobuf.Struct detail = 8;
+  string hash = 9;
+  string prev_hash = 10;
+}
+
+message Job {
+  string id = 1;
+  string kind = 2;
+  string state = 3;
+  int32 attempt = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp finalized_at = 6;
+  string error = 7;
+  google.protobuf.Struct args = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Typed error details (carried in google.rpc.Status.details)
+// ---------------------------------------------------------------------------
+
+message CelError {
+  int32 line = 1;
+  int32 col = 2;
+  string message = 3;
+  string symbol = 4;
+}
+
+message VersionConflict {
+  int64 current_version = 1;
+}
+
+message SchemaViolation {
+  message InvalidProperty {
+    string property_id = 1;
+    string reason = 2;
+  }
+  repeated string missing_required = 1;
+  repeated InvalidProperty invalid = 2;
+}
+
+message PermissionDenied {
+  string permission = 1;
+  string resource = 2;
+  bool as_owner = 3;
+}

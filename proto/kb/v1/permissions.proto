@@ -1,0 +1,157 @@
+syntax = "proto3";
+
+package kb.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "kb/v1/common.proto";
+
+option go_package = "github.com/acx1729/ocean/gen/kb/v1;kbv1";
+
+service PermissionsService {
+  rpc Check(CheckRequest) returns (CheckResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Grant(GrantRequest) returns (GrantResponse);
+  rpc Revoke(RevokeGrantRequest) returns (RevokeGrantResponse);
+  rpc ListGrants(ListGrantsRequest) returns (ListGrantsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Effective(EffectiveRequest) returns (EffectiveResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+message CheckRequest {
+  string workspace_id = 1;
+  // Defaults to the caller.
+  string principal = 2;
+  string permission = 3;
+  ResourceType resource_type = 4;
+  string resource_id = 5;
+  google.protobuf.Struct context = 6;
+}
+
+message CheckResponse {
+  bool allowed = 1;
+  // For agents: the owner check result.
+  bool allowed_as_owner = 2;
+}
+
+message GrantRequest {
+  string workspace_id = 1;
+  Grant grant = 2;
+}
+
+message GrantResponse {
+  Grant grant = 1;
+}
+
+message RevokeGrantRequest {
+  string workspace_id = 1;
+  Grant grant = 2;
+}
+
+message RevokeGrantResponse {}
+
+message ListGrantsRequest {
+  string workspace_id = 1;
+  ResourceType resource_type = 2;
+  string resource_id = 3;
+  int32 page_size = 4;
+  string cursor = 5;
+}
+
+message ListGrantsResponse {
+  repeated Grant grants = 1;
+  string next_cursor = 2;
+}
+
+message EffectiveRequest {
+  string workspace_id = 1;
+  string principal = 2;
+  ResourceType resource_type = 3;
+  string resource_id = 4;
+}
+
+message EffectiveResponse {
+  repeated string permissions = 1;
+}
+
+service PolicyService {
+  rpc GetScheme(GetSchemeRequest) returns (GetSchemeResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc UpdateScheme(UpdateSchemeRequest) returns (UpdateSchemeResponse);
+  rpc ListSchemeVersions(ListSchemeVersionsRequest) returns (ListSchemeVersionsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Explain(ExplainPermissionRequest) returns (ExplainPermissionResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+message SchemeVersion {
+  int32 version = 1;
+  google.protobuf.Struct scheme = 2;
+  string fga_model_id = 3;
+  string created_by = 4;
+  google.protobuf.Timestamp created_at = 5;
+  // Generated OpenFGA DSL.
+  string model_dsl = 6;
+}
+
+message GetSchemeRequest {
+  string workspace_id = 1;
+  // Zero means current.
+  int32 version = 2;
+}
+
+message GetSchemeResponse {
+  SchemeVersion scheme = 1;
+}
+
+message UpdateSchemeRequest {
+  string workspace_id = 1;
+  google.protobuf.Struct scheme = 2;
+  int32 if_version = 3;
+}
+
+message UpdateSchemeResponse {
+  int32 version = 1;
+  string fga_model_id = 2;
+}
+
+message ListSchemeVersionsRequest {
+  string workspace_id = 1;
+  int32 page_size = 2;
+  string cursor = 3;
+}
+
+message ListSchemeVersionsResponse {
+  repeated SchemeVersion versions = 1;
+  string next_cursor = 2;
+}
+
+message ExplainPermissionRequest {
+  string workspace_id = 1;
+  string principal = 2;
+  string permission = 3;
+  ResourceType resource_type = 4;
+  string resource_id = 5;
+}
+
+message ExplainNode {
+  string relation = 1;
+  string object = 2;
+  // Scheme role that produced this leaf, when any.
+  string role = 3;
+  repeated string users = 4;
+  repeated ExplainNode children = 5;
+  string operator = 6;
+}
+
+message ExplainPermissionResponse {
+  bool allowed = 1;
+  ExplainNode tree = 2;
+}

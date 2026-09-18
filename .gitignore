@@ -1,0 +1,15 @@
+/bin/
+/dist/
+/rust/loro-cabi/target/
+/web/node_modules/
+/web/dist/
+/.cache/
+*.log
+*.test
+*.out
+coverage.*
+.env
+.env.*
+!.env.example
+/internal/web/dist/*
+!/internal/web/dist/.gitkeep

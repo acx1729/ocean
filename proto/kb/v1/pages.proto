@@ -1,0 +1,273 @@
+syntax = "proto3";
+
+package kb.v1;
+
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "kb/v1/common.proto";
+
+option go_package = "github.com/acx1729/ocean/gen/kb/v1;kbv1";
+
+service PagesService {
+  rpc Create(CreatePageRequest) returns (CreatePageResponse);
+  rpc Get(GetPageRequest) returns (GetPageResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc List(ListPagesRequest) returns (ListPagesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc Update(UpdatePageRequest) returns (UpdatePageResponse);
+  rpc Move(MovePageRequest) returns (MovePageResponse);
+  rpc Trash(TrashPageRequest) returns (TrashPageResponse);
+  rpc Restore(RestorePageRequest) returns (RestorePageResponse);
+  rpc Purge(PurgePageRequest) returns (PurgePageResponse);
+  // Returns the journal page for a date, creating it when absent.
+  rpc Journal(JournalRequest) returns (JournalResponse);
+  rpc Convert(ConvertPageRequest) returns (ConvertPageResponse);
+  rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc GetVersion(GetVersionRequest) returns (GetVersionResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc RestoreVersion(RestoreVersionRequest) returns (RestoreVersionResponse);
+  rpc ImportFolder(ImportFolderRequest) returns (ImportFolderResponse);
+  rpc GetImportReport(GetImportReportRequest) returns (GetImportReportResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc ExportMarkdown(ExportMarkdownRequest) returns (ExportMarkdownResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+message CreatePageRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+  string title = 3;
+  // Any doc-owning type; defaults to page.
+  string type_id = 4;
+  string parent_page_id = 5;
+  google.protobuf.Struct props = 6;
+  // Parsed with the page format rules into blocks.
+  string markdown = 7;
+  PageFormat format = 8;
+  string icon = 9;
+  string journal_date = 10;
+}
+
+message CreatePageResponse {
+  Page page = 1;
+  repeated Block blocks = 2;
+}
+
+message GetPageRequest {
+  string workspace_id = 1;
+  oneof ref {
+    string page_id = 2;
+    string uri = 3;
+    string key = 4;
+  }
+  ContentFormat format = 5;
+  int32 depth = 6;
+  bool expand_embeds = 7;
+  WaitForSeq wait_for_seq = 8;
+}
+
+message GetPageResponse {
+  Page page = 1;
+  repeated Block blocks = 2;
+  string markdown = 3;
+  int64 indexed_seq = 4;
+}
+
+message ListPagesRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+  int32 page_size = 3;
+  string cursor = 4;
+  string parent_page_id = 5;
+  bool journals_only = 6;
+  bool include_trashed = 7;
+  CountMode count_mode = 8;
+}
+
+message ListPagesResponse {
+  repeated Page pages = 1;
+  string next_cursor = 2;
+  Count count = 3;
+  int64 indexed_seq = 4;
+}
+
+message UpdatePageRequest {
+  string workspace_id = 1;
+  string page_id = 2;
+  Page page = 3;
+  google.protobuf.FieldMask update_mask = 4;
+  int64 if_version = 5;
+}
+
+message UpdatePageResponse {
+  Page page = 1;
+}
+
+message MovePageRequest {
+  string workspace_id = 1;
+  string page_id = 2;
+  string parent_page_id = 3;
+  string project_id = 4;
+}
+
+message MovePageResponse {
+  Page page = 1;
+}
+
+message TrashPageRequest {
+  string workspace_id = 1;
+  string page_id = 2;
+}
+
+message TrashPageResponse {
+  google.protobuf.Timestamp purge_after = 1;
+}
+
+message RestorePageRequest {
+  string workspace_id = 1;
+  string page_id = 2;
+}
+
+message RestorePageResponse {
+  Page page = 1;
+}
+
+message PurgePageRequest {
+  string workspace_id = 1;
+  string page_id = 2;
+}
+
+message PurgePageResponse {}
+
+message JournalRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+  // YYYY-MM-DD; defaults to today in UTC.
+  string date = 3;
+}
+
+message JournalResponse {
+  Page page = 1;
+  bool created = 2;
+}
+
+message ConvertPageRequest {
+  string workspace_id = 1;
+  string page_id = 2;
+  PageFormat format = 3;
+}
+
+message ConvertPageResponse {
+  Page page = 1;
+}
+
+message ListVersionsRequest {
+  string workspace_id = 1;
+  string page_id = 2;
+  int32 page_size = 3;
+  string cursor = 4;
+}
+
+message ListVersionsResponse {
+  repeated Version versions = 1;
+  string next_cursor = 2;
+}
+
+message GetVersionRequest {
+  string workspace_id = 1;
+  string page_id = 2;
+  int64 seq = 3;
+  ContentFormat format = 4;
+}
+
+message GetVersionResponse {
+  Page page = 1;
+  repeated Block blocks = 2;
+  string markdown = 3;
+}
+
+message RestoreVersionRequest {
+  string workspace_id = 1;
+  string page_id = 2;
+  int64 seq = 3;
+  int64 if_version = 4;
+}
+
+message RestoreVersionResponse {
+  Page page = 1;
+  int64 version = 2;
+}
+
+message ImportOptions {
+  PageFormat force_format = 1;
+  bool publish = 2;
+  // Create pages for unresolved links.
+  bool create_missing = 3;
+}
+
+message ImportFolderRequest {
+  string workspace_id = 1;
+  string project_id = 2;
+  string upload_id = 3;
+  ImportOptions options = 4;
+}
+
+message ImportFolderResponse {
+  string job_id = 1;
+}
+
+message GetImportReportRequest {
+  string workspace_id = 1;
+  string job_id = 2;
+}
+
+message ImportFileReport {
+  string path = 1;
+  string page_id = 2;
+  int32 blocks_created = 3;
+  repeated string raw_node_kinds = 4;
+  repeated string unresolved_links = 5;
+  int32 queries_translated = 6;
+  int32 queries_partial = 7;
+  map<string, string> property_kinds = 8;
+  bool refused = 9;
+  string error = 10;
+}
+
+message ImportReport {
+  string job_id = 1;
+  string state = 2;
+  int32 files = 3;
+  int32 pages_created = 4;
+  int32 blocks_created = 5;
+  int32 assets_uploaded = 6;
+  repeated ImportFileReport file_reports = 7;
+  google.protobuf.Timestamp started_at = 8;
+  google.protobuf.Timestamp finished_at = 9;
+  string error = 10;
+}
+
+message GetImportReportResponse {
+  ImportReport report = 1;
+}
+
+message ExportMarkdownRequest {
+  string workspace_id = 1;
+  string page_id = 2;
+  bool include_children = 3;
+}
+
+message ExportMarkdownResponse {
+  // Single page: the canonical serialization.
+  string markdown = 1;
+  // With children: a signed download URL for the zip.
+  string download_url = 2;
+}
