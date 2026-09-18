@@ -550,8 +550,9 @@ A v1 user can:
   live transclusion, linked and unlinked references, and a graph view.
 - Model knowledge with types, typed properties, typed edges with metadata,
   collections and saved views, and find it with full-text search or CEL.
-- Govern metadata: validation, workflow transitions, derived properties and
-  reactions declared as data and evaluated with CEL.
+- Govern attributes: constraints, change rules, derived attributes and
+  reactions declared as data over attributes and virtual collections and
+  evaluated with CEL (section 6.7).
 - Share at workspace, project, page or block level, with groups, links and
   publications, and see why anyone has access.
 - Import a Logseq graph, an Obsidian vault or a Notion export losslessly, and
@@ -639,8 +640,8 @@ blocks (toggle, callout, code, math, table, image, file, embed, table of
 contents; synced blocks are embeds), databases as types with typed
 properties, views (table, board, list, calendar, gallery, timeline) with a
 filter, sort and group builder compiling to CEL, inline view blocks,
-relations and rollups (CEL aggregates over edges, indexed when hot), formulas
-as CEL computed properties validated at save time, per-type templates, Notion
+relations, rollups and formulas as derivations over attributes and collection
+members (section 6.7), per-type templates, Notion
 export import (pages, databases to types and views, assets), a responsive
 layout for reading and basic editing on phones. Comments, mentions and
 notifications ship as v1.1: they need the M5 pipeline and their own model.
@@ -648,9 +649,10 @@ notifications ship as v1.1: they need the M5 pipeline and their own model.
 **K4 Organization and cross-workspace references.** Five orthogonal axes,
 all queryable and all in the sidebar: hierarchy (workspace, project, page
 tree, namespaces), classification (types with inheritance, tags), attributes
-(typed properties and edges), collections (many per block through
-`member_of`), and views (saved CEL queries with a layout, placeable as blocks
-and pinnable as smart folders); the reference graph is the emergent sixth.
+(typed properties and edges), virtual collections (a block is in every
+collection whose predicate it matches, section 6.7), and views (saved CEL
+queries with a layout, placeable as blocks and pinnable as smart folders);
+the reference graph is the emergent sixth.
 Cross-workspace references keep the invariants: no cross-workspace joins or
 foreign keys, RLS unchanged, no content copied between workspaces.
 Addressing by `kb://{workspace}/{block}`; wikilinks accept a qualifier such
@@ -685,10 +687,11 @@ right-sidebar panes for pages, blocks, references and the graph.
 **K8 Comments and notifications (v1.1).** Block-anchored threads, mentions,
 resolution, a notification inbox fed by the events pipeline.
 
-### 6.5 Edges, metadata and CEL: search and governance
+### 6.5 Edges, metadata and CEL search
 
 Confirmed: the model supports rich edges and metadata, CEL searches over both,
-and CEL governs attribute changes. The pieces and where they live:
+and CEL governs attribute changes. Edges and search are here; governance is
+section 6.7, because it rests on one more idea, the virtual collection.
 
 **Edges with metadata.** Today an edge is `(source, target, kind,
 relation_type_id, origin)` projected from a relation property stored in the
@@ -709,52 +712,9 @@ e.target.props.status != 'done')` compile to EXISTS semi-joins over
 `block_edges` with JSONB predicates, and `has_edge(rel, id)` stays. Property
 and edge metadata, system metadata (`created_by`, `updated_at`, `key`,
 `uri`, `path`, `depth`), full-text `search()` and cross-workspace scopes are
-all one environment; saved views, MCP `search_blocks` and the rule engine
-below share it. Every expression compiles to parameterized SQL under the cost
-caps of specification section 8.
-
-**Rules: CEL-governed attributes.** Rules are project-scoped data, versioned
-like schemes, edited in the UI with a dry run against existing blocks, and
-evaluated with the same CEL environment plus `old` (state before the write),
-`change` (the property ids and edges touched) and `principal` (did, kind,
-role). Four kinds, all data:
-
-| Kind | Shape | When it runs | On failure |
-| --- | --- | --- | --- |
-| Validation | `when: type == 'task'`, `assert: has(props.due) \|\| props.status != 'in_progress'` | inside the write transaction, on the post-write state | write rejected with `SchemaViolation` naming the rule and the property |
-| Transition | for a select or status property: `from: ['todo']`, `to: ['in_progress','canceled']`, `guard: has(props.assignee) && principal.role in ['editor','admin']`, `require: ['due']` | inside the write transaction, when the property changes | `FailedPrecondition` with the allowed transitions, so the UI can show them |
-| Derivation | `props.overdue = has(props.due) && props.due < now && props.status != 'done'` | at query time (compiled to SQL) or materialized by the indexer when the expression depends only on the block | never fails; a type error is caught at save time |
-| Reaction | `on: change('status')`, `when: props.status == 'done'`, `do: [set('completed_at', now), add_edge('done_by', me())]` | by the worker after commit, as the automation principal | logged and retried; loops are cut by a depth limit |
-
-Actions in reactions are a closed set: set or unset a property, add or remove
-an edge, set the type, move, append a block from a template, publish,
-notify. External webhooks stay R2 as the specification says.
-
-**Resolution semantics.** One deterministic pipeline per structured write:
-apply the mutation in a Loro transaction, evaluate derivations the rules
-need, evaluate validation and transition rules in declared order (every
-failure is reported with its path; the write commits only if none fails),
-commit, enqueue reactions. Rules run under the per-doc advisory lock on the
-freshest state the node has, so two concurrent writers cannot both pass a
-guard that only one may pass.
-
-**Governed properties and collaborative edits.** A CRDT edit cannot be
-refused after the fact without diverging clients, so a property definition
-can be marked *governed*. Governed properties are written only through
-`BlocksService.SetProperties` (the property panel and the slash commands call
-it; the Native and Source lenses show them read-only inline), which is the
-strict path above. Ungoverned properties may be typed inline as `key::
-value`; the indexer validates them, sets `compliant = false` with
-`invalid_props` when a rule fails (fields the Block message already has), and
-emits `rule.violated` so a view or an agent can act. Authorization conditions
-in the scheme (`not_closed` today) are the fifth place CEL runs and stay
-where they are.
-
-**Tests.** Property-based tests on the evaluator (a rule set and a random
-write sequence never leave a block in a state a validation forbids),
-differential tests for derivations between SQL and in-process evaluation,
-fixtures per rule kind, and an isolation test that a reaction never writes
-outside its project.
+all one environment; saved views, MCP `search_blocks` and the rules of
+section 6.7 share it. Every expression compiles to parameterized SQL under the
+cost caps of specification section 8.
 
 ### 6.6 Sequencing and size
 
@@ -765,18 +725,184 @@ outside its project.
 | E1 editing surface | 3 | M4 |
 | K1 subdocs, transclusion, reference panels | 3 | M4, M5 |
 | K2 Logseq completeness | 4 | K1, M9 |
-| K3 databases and views | 6 | M9 |
+| K3 databases and views | 6 | M9, R1 |
 | K4 organization and cross-workspace references | 3 | M6, M9 |
 | K5 permissions surface | 2 | M6, M10 |
 | K6 importers | 3 | M11 |
 | K7 graph view and sidebar panes | 1 | K1 |
-| R1 rules engine (validation, transitions, derivations, reactions) | 3 | M5, M9 |
+| R1 virtual collections, rules and the resolver (section 6.7) | 5 | M5, M9 |
 | K8 comments and notifications (v1.1) | 2 | M5 |
 
-About 53 engineer-weeks by the specification's estimating style; platform,
+About 55 engineer-weeks by the specification's estimating style; platform,
 editor and knowledge tracks run in parallel. The order that shows value
-earliest: UI-0, M4, E1, K1, M5, M6, K5, M9, K3, R1, K2, K4, M10, M11 with K6,
+earliest: UI-0, M4, E1, K1, M5, M6, K5, M9, R1, K3, K2, K4, M10, M11 with K6,
 M12, K7, M13, M14.
+
+### 6.7 Work items, virtual collections and the resolver
+
+**Two nouns.** There are work items, and there are virtual collections;
+nothing else exists. A work item is a block: a type, attributes (the schema
+calls them properties, the API `props`), Markdown content and edges.
+`status` is an attribute like `due` or `assignee`; no part of the platform
+knows what a status is. A virtual collection is a block too, whose type
+declares a membership predicate: a CEL expression evaluated per candidate
+item, with `props` the item's attributes and `self` the collection, that
+says which work items are in it. Membership is never stored, it is computed.
+An epic is a custom collection type: a block with a title, an owner and a
+target date, and the predicate `props.epic == self.id`. A sprint, an area, a
+release, a team backlog, an objective and an overdue list are the same thing
+with a different predicate. Everything below is rules over attributes and
+collections.
+
+**No hierarchy construct.** Nesting emerges from attributes. An epic is in an
+initiative because the epic's `initiative` attribute points to it; the
+initiative's members are epics, the epic's members are stories. Any depth,
+many at once (delivery: initiative, epic, story; ownership: team, person;
+planning: quarter, sprint), and an item is in every collection whose
+predicate it matches. Moving an item between collections is changing an
+attribute, so it is governed like any other change. The one structural
+hierarchy the platform keeps is the document outline, the CRDT tree that
+text editing needs; rules see it as `parent` and `path`, and page trees and
+namespaces (K2, K4) are built on it. Everything else is a collection.
+
+**Anonymous groups.** A view that groups by an attribute (`status` columns
+on a board, `area` sections in a list) produces one anonymous collection per
+distinct value at render time: no block, no attributes, no rules. When a
+value needs identity, an owner, a description or a rollup, it is promoted to
+a collection block with the predicate `props.area == 'sync'`. Two levels,
+never a third.
+
+**Keyed and query-time collections.** The schema compiler classifies every
+collection type. A predicate is keyed when it contains an equality between an
+attribute and `self.id` or a constant that an index can serve
+(`props.epic == self.id`, `props.area == 'sync' && props.status != 'done'`);
+membership is then a lookup in `block_edges` or `block_properties`, and
+rollups over it are maintained incrementally. Any other predicate
+(`props.due < now && props.status != 'done'`) is query-time: membership and
+rollups are computed when read, through the M9 compiler, and never
+materialized. The schema editor shows the class beside the type, and a
+materialized rollup over a query-time collection is refused at save time
+with the reason.
+
+**Rules.** Rules bind to attributes, never to a kind of attribute. One
+language (the M9 CEL environment plus `self`, `old`, `change`, `principal`,
+`members`, `in(rel)`, `members_of(id)` and `resolved`) and four moments to
+run, which are the four kinds:
+
+| Kind | Declared as | Runs | On failure |
+| --- | --- | --- | --- |
+| Constraint | `when: type == 'task'`, `assert: has(props.due) \|\| props.status != 'in_progress'` | before commit, on the post-write state | write rejected with `SchemaViolation` naming the rule and the attribute |
+| Change | `on: change('status')`, `from: ['todo']`, `to: ['in_progress', 'canceled']`, `guard: has(props.assignee)`, `require: ['due']`; `from` and `to` are predicates over the old and new value of any attribute | before commit, when the named attribute changes | `FailedPrecondition` listing the values this principal may set, so the UI offers exactly those |
+| Derivation | on a collection type: `set: progress`, `expr: avg(members.map(m, m.resolved.progress))`; on an item type: `set: area`, `expr: props.area ?? in('epic').resolved.area` | by the indexer (materialized) or at read time (query-time collections), never in the write path | cannot fail: type errors are caught at save, an evaluation error yields null with a provenance note |
+| Reaction | `on: change('status')`, `when: props.status == 'done'`, `do: [set('completed_at', now), add_edge('done_by', me())]` | after commit, by the worker, as the automation principal | logged and retried; loops are cut by a depth limit |
+
+Two more change rules show that nothing is special: `on: change('epic')`,
+`guard: in('epic').props.area == props.area` keeps a story in its area when
+it moves between epics; `on: change('priority')`, `to: ['p0']`, `guard:
+principal.role in ['lead', 'admin']` reserves P0. A workflow is the set of
+change rules on `status`, and the "allowed transitions" menu is
+`RulesService.AllowedValues(block, attr)`, which answers for any attribute.
+Actions in reactions are a closed set: set or unset an attribute, add or
+remove an edge, set the type, move, append a block from a template, publish,
+notify; external webhooks stay R2 as the specification says.
+
+**Rules over collections.** A rule on a collection type sees `members`; a
+rule on an item sees the collections it is in through its relation
+attributes (`in('epic')`, `in('sprint')`: the block for a single-valued
+relation, a list otherwise) and can name any collection with
+`members_of(id)`. Rollups are derivations on collection types, inheritance
+is a derivation on an item type reading `in(rel).resolved.x`, and a
+cross-collection constraint is `assert: props.status != 'done' ||
+members.all(m, m.resolved.status == 'done')` on the epic. Because
+collections nest through attributes, an initiative's progress reads its
+epics' resolved progress, itself a rollup: derivations form a dependency
+graph over `(type, attribute)` pairs, which the compiler stratifies,
+rejecting a cycle at save time with the cycle named.
+
+**Resolved attributes.** Truth is `props`, in the CRDT. The resolver adds
+`resolved`: every attribute of truth plus the derived ones, computed by the
+indexer into `blocks.resolved` (JSONB) with provenance in
+`resolution_provenance(block_id, attr, rule_id, sources, computed_at)`.
+Reads return both, the query environment exposes `resolved.x`, rules read
+`resolved` (so a constraint may rely on a rollup) and write only their own
+derived attribute, or, for reactions, truth through `SetProperties`.
+
+**Evaluation is incremental and confluent.** Derivations are pure functions
+of truth and the rule set, so the result never depends on the order in which
+changes arrive. When attribute `a` of item `x` changes, the index job
+recomputes the derivations on `x` that read `a`; the derivations that read
+`a` over members on the keyed collections `x` was in before and is in after
+the change (both, since membership may have moved), then their dependents up
+the graph; and, when `x` is itself a collection, the derivations on its
+members that inherit from it. Fan-out is bounded per job (10,000 blocks);
+past the bound the job marks the collection `stale` and a follow-up job
+finishes. `AdminService.Recompute(project | rule)` rebuilds `resolved` from
+truth, and the confluence test below holds the incremental path to it.
+
+**Governed attributes and collaborative edits.** A CRDT edit cannot be
+refused after the fact without diverging clients, so an attribute that has a
+constraint or change rule is governed: it is written only through
+`BlocksService.SetProperties` (the property panel, slash commands, MCP and
+reactions call it), which runs the pre-commit rules under the per-doc
+advisory lock on the freshest state the node has, so two concurrent writers
+cannot both pass a guard only one may pass. Lenses show governed attributes
+inline and read-only. Ungoverned attributes may be typed inline as `key::
+value`; the indexer validates them, sets `compliant = false` with
+`invalid_props` when a constraint fails and emits `rule.violated`, so a view
+or an agent can act. Authorization conditions in the scheme stay where they
+are: they are the fifth place CEL runs, not a rule.
+
+**Dry run and resolve.** `RulesService.DryRun(scope, rules, changes)`
+evaluates a rule set, the current one or a candidate, against a scope (a
+collection id, a CEL predicate or a list of ids), after applying optional
+hypothetical attribute changes, on a repeatable-read snapshot, and streams a
+report: constraint violations by rule and item, change rules that would
+refuse, every resolved attribute that would differ (before, after,
+provenance) and the reactions that would fire, actions listed. Nothing is
+written; the run is stored in `rule_runs` with its rule-set version so the
+editor can diff two runs. The same call with the current rules and no
+changes is Resolve: a collection's members with their effective attributes
+and provenance; `Explain(block, attr)` is the single-item form.
+
+**Permissions.** A collection block is shared like any block; seeing it
+grants its rollups. Materialized rollups count every member in the project
+whatever the reader may open (a progress bar includes stories the reader
+cannot see); a type may declare `rollup: visible_to_reader`, which makes its
+rollups query-time and access-filtered. Provenance never lists a source the
+reader cannot view, it counts it. Reactions run as the project's automation
+principal and cannot write outside the project. No predicate crosses a
+workspace (K4 forbids cross-workspace joins); a federated collection is a
+per-workspace union at read time, never materialized.
+
+**Interfaces.** `RulesService` (`ListRules`, `PutRules` versioned, `DryRun`
+streaming, `Explain`, `AllowedValues`); collection types are ordinary
+`SchemaService` types with a `collection` clause (`members`, `rollup`);
+`Block.resolved_props`; CEL functions `members`, `members_of`, `in` and the
+`resolved` map; tables `rules`, `rule_runs`, `resolution_provenance` and the
+column `blocks.resolved`. There is no collections service and no workflow
+service: a collection is a block whose members are a query, and a workflow
+is rules on an attribute.
+
+**Limits.** 500 rules per project; the expression cost caps of specification
+section 8; 16 derivation strata; 10,000 blocks of fan-out per index job;
+100,000 items per dry run, streamed; `members` pages like any list.
+
+**Tests that define done.** Confluence: random rule sets and random write
+sequences over a seeded project, and after every step the incremental
+`resolved` equals `Recompute` from scratch. Safety: no committed state
+violates an enabled constraint, and a refused change leaves no trace in
+truth, projection or outbox. Membership: for every keyed collection the
+index lookup equals the predicate evaluated in-process. Dry-run fidelity:
+applying a report's hypothetical changes for real reproduces the report.
+Isolation: no resolved value or provenance source crosses a project.
+Performance: a status change on a story under an initiative with 10,000
+descendants updates the rollup chain within the M5 index-lag SLO.
+
+**Why this is the clean design.** One noun exists (the work item), one is
+derived (the collection, a predicate), one language (CEL), one strict write
+path (`SetProperties`), one projection (`resolved`) and one report (the dry
+run). Nothing in the platform knows what an epic, a sprint or a status is;
+only the schema a project wrote does.
 
 ---
 
@@ -930,6 +1056,10 @@ hub's debounced indexer; `docs.indexed_seq`; snapshot APIs in `truth`;
 - Reflected relations (M6 dependency): the index job is where
   `block:X#assignee@user:U` tuples are written when `props.assignee` changes;
   design the job so it emits property deltas even before FGA exists.
+- Resolver (section 6.7): the same index job recomputes `blocks.resolved` and
+  its provenance from the property deltas; the lookup from a changed
+  attribute to the derivations that read it lives in the compiled rule set,
+  not in SQL, and fan-out beyond 10,000 blocks continues in a follow-up job.
 
 **Done when.** Index lag p95 < 1 s under the k6 write suite; a killed worker
 loses nothing (jobs are transactional); compaction keeps every retained seq
@@ -1036,6 +1166,11 @@ handling, the cost estimate, the plan cache, the service, tests.
   `stats`. `include: EDGES` joins `block_edges`.
 - Limits (§8): 200 AST nodes, `in` lists ≤ 1000, page size ≤ 500, cost ≤ 50
   units, 8 concurrent queries per principal (`rate_limits` or a semaphore).
+- Collections and resolved attributes (section 6.7): `members`,
+  `members_of(id)`, `in(rel)` and `resolved.x` belong to the environment from
+  the start; `members` of a keyed collection compiles to a lookup on
+  `block_edges` or `block_properties`, of a query-time collection to a
+  subquery of its predicate under the same cost caps.
 - Differential test: seed a workspace (start with a few thousand blocks;
   the 100K corpus belongs to the nightly suite), evaluate every fixture
   expression in-process over all blocks and compare the set of matching ids
@@ -1284,7 +1419,9 @@ These are conventions the existing code follows; new code should too.
 
 Open decisions carried from §14: contract-wallet support without an RPC
 URL (currently refused), audit retention default (forever vs one year with
-export), the product name behind `kb.v1` and `kb://`.
+export), the product name behind `kb.v1` and `kb://`. New in this handbook:
+the default rollup visibility (every member in the project, or
+`visible_to_reader`; section 6.7).
 
 Gaps and risks observed while building M1–3, 7 and 8:
 
