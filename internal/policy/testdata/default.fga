@@ -1,0 +1,60 @@
+model
+  schema 1.1
+
+type user
+
+type agent
+  relations
+    define owner: [user]
+
+type group
+  relations
+    define member: [user, group#member]
+
+type workspace
+  relations
+    define admin: [user, agent, group#member, user with not_closed, agent with not_closed, group#member with not_closed]
+    define editor: [user, agent, group#member, user with not_closed, agent with not_closed, group#member with not_closed] or admin
+    define viewer: [user, agent, group#member, user with not_closed, agent with not_closed, group#member with not_closed] or editor
+    define blocked: [user, agent]
+    define can_manage_members: admin but not blocked
+    define can_manage_schema: admin but not blocked
+
+type project
+  relations
+    define workspace: [workspace]
+    define editor: [user, agent, group#member, user with not_closed, agent with not_closed, group#member with not_closed] or editor from workspace
+    define publisher: [user, agent, group#member, user with not_closed, agent with not_closed, group#member with not_closed]
+    define viewer: [user, agent, group#member, user with not_closed, agent with not_closed, group#member with not_closed] or editor or publisher or viewer from workspace
+    define blocked: blocked from workspace
+    define can_view: viewer but not blocked
+    define can_edit: editor but not blocked
+    define can_publish: (publisher or admin from workspace) but not blocked
+
+type doc
+  relations
+    define project: [project]
+    define parent: [doc]
+    define editor: [user, agent, group#member, user with not_closed, agent with not_closed, group#member with not_closed] or editor from parent or editor from project
+    define viewer: [user, agent, group#member, user:*, user with not_closed, agent with not_closed, group#member with not_closed] or editor or viewer from parent or viewer from project
+    define blocked: blocked from project
+    define can_view: viewer but not blocked
+    define can_edit: editor but not blocked
+    define can_share: editor but not blocked
+    define can_change_type: editor but not blocked
+
+type block
+  relations
+    define doc: [doc]
+    define assignee: [user]
+    define can_edit: can_edit from doc
+    define can_set_status: can_edit from doc or assignee
+
+type attribute_def
+  relations
+    define project: [project]
+    define writer: [user, agent, group#member] or editor from project
+
+condition not_closed(status: string) {
+  status != 'closed'
+}

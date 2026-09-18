@@ -30,6 +30,9 @@ func NewDB(t testing.TB) *db.DB {
 	ctx := context.Background()
 	admin, err := pgx.Connect(ctx, AdminDSN())
 	if err != nil {
+		if os.Getenv("KB_TEST_REQUIRE_DB") != "" {
+			t.Fatalf("postgres not reachable at %s (KB_TEST_REQUIRE_DB is set): %v", AdminDSN(), err)
+		}
 		t.Skipf("postgres not reachable at %s: %v", AdminDSN(), err)
 	}
 	var suffix [4]byte
