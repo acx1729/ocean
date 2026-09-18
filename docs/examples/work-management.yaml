@@ -1,7 +1,7 @@
 # A Jira-style delivery project declared with the atoms of handbook section
 # 6.7: work items with attributes, one home each, virtual collections, views
-# that are conditions, and rules over attributes. This is the R1 acceptance
-# fixture: the loader is part of R1 and the R1 tests run against this file.
+# that are conditions, and rules over attributes. This is the W1 acceptance
+# fixture: the loader is part of W1 and the W1 tests run against this file.
 # Expressions are CEL in the M9 environment (handbook 6.5 and 6.7).
 project: delivery
 

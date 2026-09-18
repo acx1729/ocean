@@ -725,17 +725,17 @@ cost caps of specification section 8.
 | E1 editing surface | 3 | M4 |
 | K1 subdocs, transclusion, reference panels | 3 | M4, M5 |
 | K2 Logseq completeness | 4 | K1, M9 |
-| K3 databases and views | 6 | M9, R1 |
+| K3 databases and views | 6 | M9, W1 |
 | K4 organization and cross-workspace references | 3 | M6, M9 |
 | K5 permissions surface | 2 | M6, M10 |
 | K6 importers | 3 | M11 |
 | K7 graph view and sidebar panes | 1 | K1 |
-| R1 virtual collections, rules and the resolver (section 6.7) | 6 | M5, M9 |
+| W1 work model: virtual collections, rules and the resolver (section 6.7) | 6 | M5, M9 |
 | K8 comments and notifications (v1.1) | 2 | M5 |
 
 About 56 engineer-weeks by the specification's estimating style; platform,
 editor and knowledge tracks run in parallel. The order that shows value
-earliest: UI-0, M4, E1, K1, M5, M6, K5, M9, R1, K3, K2, K4, M10, M11 with K6,
+earliest: UI-0, M4, E1, K1, M5, M6, K5, M9, W1, K3, K2, K4, M10, M11 with K6,
 M12, K7, M13, M14.
 
 ### 6.7 Work items, virtual collections and the resolver
@@ -924,16 +924,16 @@ the table, index or RPC is in the tree today
 | Item types with inheritance and defaults | Jira issue types, ClickUp task types, Notion databases | `block_types` (`extends_type_id`, `required_props`, `allowed_props`, `defaults`, `numbered`, `owns_doc`); `work` with shipped subtypes | exists |
 | Stable keys across moves | `PROJ-123` | `blocks.key`, `block_keys` with old keys kept as aliases after a cross-project move | exists |
 | One home, sub-tasks, breadcrumbs | Jira parent and sub-task, ClickUp home list, Notion page tree | `parent_block_id`, `page_id`, `wbs_path`, `depth`, `pages.parent_page_id`, `BlocksService.Move`, `path` | exists |
-| Items in many groupings | Jira epics, sprints, versions and components; ClickUp tasks in multiple lists | collection types (`collection_capable` plus the `members` predicate), relation attributes | R1 |
-| Dependencies and blocking | Jira issue links, ClickUp dependencies | `relation_types` (inverse name, symmetric, `dag`, source and target types), `block_edges`, edge metadata (6.5) | exists; edge metadata R1 |
-| Lifecycles | Jira workflows: statuses, transitions, conditions, validators, post functions | change rules (`from`, `to`, `guard`, `require`) and reactions on any attribute; `SetProperties` as the one strict path; `AllowedValues` | R1 |
-| Required fields and validation | Jira field configurations and validators | `required_props`, `compliant` and `invalid_props` today; constraints | partly exists; R1 |
-| Rollups, formulas, progress | Notion rollups and formulas, Jira epic progress, ClickUp progress | derivations into `resolved` with provenance, incremental | R1 |
+| Items in many groupings | Jira epics, sprints, versions and components; ClickUp tasks in multiple lists | collection types (`collection_capable` plus the `members` predicate), relation attributes | W1 |
+| Dependencies and blocking | Jira issue links, ClickUp dependencies | `relation_types` (inverse name, symmetric, `dag`, source and target types), `block_edges`, edge metadata (6.5) | exists; edge metadata W1 |
+| Lifecycles | Jira workflows: statuses, transitions, conditions, validators, post functions | change rules (`from`, `to`, `guard`, `require`) and reactions on any attribute; `SetProperties` as the one strict path; `AllowedValues` | W1 |
+| Required fields and validation | Jira field configurations and validators | `required_props`, `compliant` and `invalid_props` today; constraints | partly exists; W1 |
+| Rollups, formulas, progress | Notion rollups and formulas, Jira epic progress, ClickUp progress | derivations into `resolved` with provenance, incremental | W1 |
 | Boards, lists, tables, calendars, timelines, saved filters | Jira boards and JQL filters, ClickUp views, Notion views | view blocks (`view_programs`) with a predicate, layout, group-by and sort; `QueryService` | M9, K3 |
-| Automation, SLAs, recurring items, reminders | Jira Automation, ClickUp Automations, Notion automations | reactions with change, instant, schedule and event triggers; agents through MCP for anything external | R1, M12 |
-| Portfolio hierarchy | Jira Advanced Roadmaps: initiative, epic, story | collections nested through attributes, rollups across strata, the timeline view | R1, K3 |
-| Permissions per project, item and field | Jira permission and issue-security schemes, ClickUp privacy | schemes compiled to OpenFGA, the doc as permission unit, `Restrict`, governed attributes, `rollup: visible_to_reader` | M6, R1 |
-| History and audit | Jira history, ClickUp activity | `audit_log`, per-doc CRDT history, `rule_runs` | exists; runs R1 |
+| Automation, SLAs, recurring items, reminders | Jira Automation, ClickUp Automations, Notion automations | reactions with change, instant, schedule and event triggers; agents through MCP for anything external | W1, M12 |
+| Portfolio hierarchy | Jira Advanced Roadmaps: initiative, epic, story | collections nested through attributes, rollups across strata, the timeline view | W1, K3 |
+| Permissions per project, item and field | Jira permission and issue-security schemes, ClickUp privacy | schemes compiled to OpenFGA, the doc as permission unit, `Restrict`, governed attributes, `rollup: visible_to_reader` | M6, W1 |
+| History and audit | Jira history, ClickUp activity | `audit_log`, per-doc CRDT history, `rule_runs` | exists; runs W1 |
 | Search | JQL, ClickUp filters, Notion search | CEL over attributes, edges, paths and full text (`tsv`, trigram) compiled to SQL | draft, M9 |
 | Comments, mentions, notifications | everywhere | K8 | v1.1 |
 
@@ -943,7 +943,7 @@ Jira-style project with nothing but these atoms: `story`, `bug` and
 types; a lifecycle for `status` and a guard on `priority`; a guard on the
 home; inheritance of `epic` from the home; one progress rollup shared by two
 collection types; four views; a reminder, a schedule and a dry run. It is
-the R1 acceptance fixture: the loader for it is part of R1 and the tests
+the W1 acceptance fixture: the loader for it is part of W1 and the tests
 below run against it.
 
 **Interfaces.** `RulesService` (`ListRules`, `PutRules` versioned, `DryRun`
