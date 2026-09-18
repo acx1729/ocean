@@ -15,11 +15,13 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/acx1729/ocean/internal/auth"
+	"github.com/acx1729/ocean/internal/authz"
 	"github.com/acx1729/ocean/internal/config"
 	"github.com/acx1729/ocean/internal/db"
 	"github.com/acx1729/ocean/internal/keyring"
 	"github.com/acx1729/ocean/internal/server"
 	"github.com/acx1729/ocean/internal/telemetry"
+	"github.com/acx1729/ocean/internal/truth"
 	"github.com/acx1729/ocean/internal/version"
 )
 
@@ -40,6 +42,9 @@ type App struct {
 	keys          *keyring.KeyRing
 	authStore     *auth.Store
 	authn         *auth.Authenticator
+	guard         authz.Guard
+	truth         *truth.Store
+	mat           *truth.Materializer
 }
 
 // New opens the dependencies and builds the handler. It does not listen.
