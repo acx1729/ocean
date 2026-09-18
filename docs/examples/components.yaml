@@ -1,0 +1,24 @@
+# Template components are workspace data (handbook 6.8): a name, a prop
+# schema in the attribute kinds, and a Markdown body with CEL holes and a
+# <Children/> slot. Expansion goes through the same parser and sanitizer as
+# any page. X1 acceptance fixture.
+components:
+  - name: Decision
+    props:
+      owner:  {kind: user, required: true}
+      date:   {kind: date}
+      status: {kind: select, options: [proposed, accepted, superseded], default: proposed}
+    body: |
+      <Callout kind="decision" title={"Decision · " + props.status}>
+      <Children/>
+
+      Owner {props.owner} · {has(props.date) ? string(props.date) : "undated"}
+      </Callout>
+  - name: EpicHeader
+    props:
+      epic: {kind: relation, relation: in_epic, required: true}
+    body: |
+      <Columns>
+      <Column><Property of={props.epic} name="owner"/> · target <Property of={props.epic} name="target_date"/></Column>
+      <Column><Rollup of={props.epic} name="progress" as="bar"/></Column>
+      </Columns>

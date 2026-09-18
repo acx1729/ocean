@@ -59,7 +59,10 @@ whose type extends the shipped base type `work`, keyed `KB-123`) and, in R2,
 **Explicit non-goals for R1** (§1): Electron packaging, Canvas, WYSIWYG marks,
 views/boards, workflows and automations, comments, git/folder sync, MDX
 evaluation, webhooks, federation, custom domains, and client-held workspace
-keys (that last one is a different product, not a later phase).
+keys (that last one is a different product, not a later phase). Two of these
+are pulled into this handbook's Release 1: views and boards (K3) and MDX
+component rendering (section 6.8), the latter still without evaluating
+JavaScript.
 
 ---
 
@@ -546,6 +549,9 @@ A v1 user can:
 - Write in an outliner or a document, in Native, Source or Split (section 5),
   alone or live with others, offline, on a laptop, in the browser and in the
   macOS app.
+- Write content pages in Markdown or MDX: registry and template components
+  render in every lens and in publishing, expressions are CEL, and unknown
+  components survive round trips (section 6.8).
 - Reference anything: pages, blocks, sub-documents and other workspaces, with
   live transclusion, linked and unlinked references, and a graph view.
 - Model knowledge with types, typed properties, typed edges with metadata,
@@ -720,7 +726,7 @@ cost caps of specification section 8.
 
 | Track | Weeks | Depends on |
 | --- | --- | --- |
-| Platform M4 to M14 | 21 | as planned |
+| Platform M4 to M14 | 23 | as planned, plus the MDX additions to M4, M5, M10 and M11 (section 6.8) |
 | UI-0 shadcn foundation and Tauri shell | 2 | none |
 | E1 editing surface | 3 | M4 |
 | K1 subdocs, transclusion, reference panels | 3 | M4, M5 |
@@ -731,11 +737,12 @@ cost caps of specification section 8.
 | K6 importers | 3 | M11 |
 | K7 graph view and sidebar panes | 1 | K1 |
 | W1 work model: virtual collections, rules and the resolver (section 6.7) | 6 | M5, M9 |
+| X1 MDX components (section 6.8), part of Release 1 | 3 | M4, M9 |
 | K8 comments and notifications (v1.1) | 2 | M5 |
 
-About 56 engineer-weeks by the specification's estimating style; platform,
+About 61 engineer-weeks by the specification's estimating style; platform,
 editor and knowledge tracks run in parallel. The order that shows value
-earliest: UI-0, M4, E1, K1, M5, M6, K5, M9, W1, K3, K2, K4, M10, M11 with K6,
+earliest: UI-0, M4, E1, K1, M5, M6, K5, M9, X1, W1, K3, K2, K4, M10, M11 with K6,
 M12, K7, M13, M14.
 
 ### 6.7 Work items, virtual collections and the resolver
@@ -981,6 +988,104 @@ derived (the collection, a predicate), one home per item, one language
 and one report (the dry run). Nothing in the platform knows what an epic, a
 sprint or a status is; only the schema a project wrote does.
 
+### 6.8 MDX components in Release 1
+
+**Decision.** MDX component rendering moves from the specification's R2 list
+into Release 1, under one rule that keeps every invariant this platform has:
+content never runs code. Components come from a registry, expressions are
+CEL, imports load nothing. What the engine already does stays: MDX is parsed
+with the other dialects, and anything unmodelled round-trips byte-exact.
+
+**Three kinds of component, two of them in R1.**
+
+- *Registry components* ship in the binary with a typed prop schema, a Go
+  renderer for publishing and a TypeScript renderer for the lenses:
+  `Callout`, `Tabs` and `Tab`, `Steps` and `Step`, `Columns` and `Column`,
+  `Card` and `Cards`, `Details`, `Badge`, `Kbd`, `Image`, `Video`, `File`,
+  `Embed`, `Toc`, `WorkView`, `Property`, `Rollup` and `Chart`. An alias
+  table maps the names docs frameworks use (Docusaurus `Tabs`, `TabItem` and
+  admonitions, Nextra `Callout`, Starlight `Aside`, `Steps`, `Tabs` and
+  `Card`) onto them.
+- *Template components* are workspace data: a name, a prop schema in the
+  attribute kinds, a Markdown body with CEL holes such as `{props.owner}`
+  and a `<Children/>` slot. Expansion produces Markdown that goes through the
+  same parser and sanitizer, eight levels deep at most. They live as blocks
+  of the reserved type `component` on a project's Components page, rows not
+  code, versioned like schemes.
+- *Sandboxed code components* stay out of R1. The registry has the entry
+  kind and the extension point (an iframe on an opaque origin with a props
+  protocol), but publishing must render without JavaScript, agents must see
+  structured props and the CSP forbids content scripts, so nothing ships
+  until those hold.
+
+**Expressions are CEL.** `{…}` in MDX text and in props is a CEL expression
+in the page scope: `page`, `self`, `props`, `resolved`, `parent`,
+`principal`, `now`, `block`, `members_of` and a cost-capped `query`. The
+environment is the one search and rules use (sections 6.5 and 6.7), so
+nothing new is evaluated anywhere. JSON list and object literals are valid
+CEL, so `columns={["key", "title"]}` parses unchanged from a docs site.
+Evaluation is a derivation: the indexer evaluates every expression of a page
+into `blocks.resolved.mdx`, keyed by a hash of the expression, with
+provenance, recomputed incrementally like a rollup, so rendered values follow
+their sources within the index lag. While typing, the lens shows the last
+value as pending; an expression that fails renders its source with the
+error.
+
+**Imports and exports.** `import { Chart } from "@ocean/components"` binds
+names from a registry pack. An import from any other specifier is kept
+byte-exact and binds nothing, so its elements render as unknown components.
+`export const meta = {…}` is kept and, when its right-hand side is a CEL
+literal, exposed as `page.meta`. Nothing is fetched from the network, ever.
+
+**Unknown components** render as a labelled block that shows their source,
+export unchanged and are counted per file in the import report, so a
+Docusaurus or Nextra site imports without loss and says what it still
+needs.
+
+**Blocks.** A JSX flow element is a block of the reserved type `component`:
+the element name and parsed props in `props`, the tag source in `content`,
+its inner Markdown as child blocks. Children are therefore addressable,
+referenceable and collaboratively edited like any block, and the serializer
+reassembles the element in tree order. JSX text elements and expressions
+inside a paragraph stay inline in that paragraph's text. In Native a
+component block shows a property form generated from its schema and its
+children edit in place; Source and Split show the tag text. An untouched
+element round-trips byte-exact because its source is kept; an edit through
+the form re-serializes the tag canonically.
+
+**Rendering paths.** The lenses render the registry in TypeScript from the
+projection. Publishing renders the same registry in Go to HTML with no
+JavaScript (tabs and details degrade to stacked sections with headings),
+followed by the sanitizer. MCP returns component blocks with their
+structured props. Export writes the source. A conformance fixture set holds
+the Go and TypeScript renderers to the same structure.
+
+**Security.** No content script executes: JSX is data, expressions are CEL
+under the M9 cost caps, templates expand to Markdown that passes the
+sanitizer, imports load nothing, URLs in props pass the allowlist Markdown
+links pass, and there is no raw-HTML escape hatch. The threat table of §13
+gains rows for component props, expressions and templates, each with its
+test.
+
+**What it changes in the plan.** M4 parses JSX props to CEL and produces
+component blocks with the alias table; M5 evaluates expression derivations in
+the index job; M9 adds the page scope and the `query` cap; M10 renders the
+registry in Go; M11 counts unknown components in the report; E1 and K3 add
+the property form, the slash insert and Split parity; M12 returns the props.
+The registry with its two renderers, template components, expression
+derivations and the security tests form track X1 (3 weeks, after M4 and
+M9), part of Release 1. `docs/examples/reconnect-flow.mdx` and
+`docs/examples/components.yaml` are its acceptance fixtures.
+
+**Tests that define done.** The MDX fixture set round-trips byte-exact with
+components edited and unedited; Go and TypeScript renders agree
+structurally on every fixture; no fixture, including hostile ones (script
+tags in props, `javascript:` URLs, recursive templates, expressions past the
+cost cap), produces executable content or an unsanitized node; a Docusaurus
+and a Nextra sample site import with the report naming every unknown
+component; expression values in a page update after a rollup changes,
+within the index-lag SLO.
+
 ---
 
 ## 7. The remaining milestones
@@ -1013,7 +1118,9 @@ turns `[[Title]]` and `#tag` into links.
   `TODO/DOING` markers, `SCHEDULED:/DEADLINE:`, math, YAML frontmatter) and a
   converter from goldmark's AST to the mdast types in `ast.go`. MDX nodes
   (`mdx_esm`, `mdx_jsx_flow`, `mdx_jsx_text`, `mdx_expression`) are parsed
-  into raw-source-carrying nodes; nothing evaluates JSX. An earlier attempt at
+  into nodes that carry their raw source; JSX flow elements become
+  `component` blocks with props parsed as CEL and the docs-framework alias
+  table applied (section 6.8); nothing evaluates JavaScript. An earlier attempt at
   this lives outside the repo and did not compile; start from `ast.go` and
   keep the goldmark dependency isolated in one subpackage.
 - Raw nodes: any construct the converter does not model becomes a `raw`
@@ -1302,7 +1409,8 @@ list of the auth interceptor, the M4 engine for HTML rendering.
   anchors, canonical link to `.md`), `.md`, `.json`, `/r/{block_id}`
   (302 when published, else 401 unless authenticated), `/a/{asset_id}`.
   Every response carries `X-KB-Seq`. HTML is rendered from the mdast with an
-  allowlist; raw HTML nodes are escaped; CSP `default-src 'none'; img-src
+  allowlist; registry components render through their Go renderers with no
+  JavaScript (section 6.8); raw HTML nodes are escaped; CSP `default-src 'none'; img-src
   'self'`. Live publications read the projection (through `wait_for_seq`
   semantics or a 60 s cache); snapshots read `ReadAt(pinned_seq)`.
 - Web app: share dialog (invite by DID, share link creation, grants list),
@@ -1342,8 +1450,8 @@ engine and the M5 job queue as dependencies.
   `^id` as block ids, upload assets and rewrite links, second pass to resolve
   `[[links]]`/`((refs))` and create missing pages, translate simple queries,
   publish `public:: true` pages when asked. A file that fails to parse
-  becomes one raw block and is flagged. Write the report per file into
-  `import_jobs`.
+  becomes one raw block and is flagged; unknown MDX components are counted
+  per file (section 6.8). Write the report per file into `import_jobs`.
 - Export: deterministic zip in the importer's layout (`pages/`, `journals/`,
   `work/`, `assets/`, `views/`), one `.md` per doc-owning block with
   frontmatter `type:` and `key:`; property ids written as names.
@@ -1513,6 +1621,7 @@ Gaps and risks observed while building M1–3, 7 and 8:
 | Browser cache key | `web/src/lib/sync-client/persistence.ts` | non-extractable is an API property, not a storage one; the desktop keychain makes it real in R2 |
 | `internal/query` has no public compile entry or tests | M9 | the generator internals exist; treat them as a draft to be tested, not as finished |
 | `internal/objectstore` untested | M11 | do the tests before wiring |
+| MDX component rendering in Release 1 | section 6.8 | a deviation from the specification's R2 list; it is safe only while content never runs code, which the X1 security tests hold, and expression evaluation adds index work that the cost caps bound |
 
 Risks from §14 that remain live: Loro's youth and cgo build complexity;
 SeaweedFS governance (the S3 API is the contract, so a store swap is a copy);

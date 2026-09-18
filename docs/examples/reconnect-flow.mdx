@@ -1,0 +1,43 @@
+---
+title: Reconnect flow
+owner: "[[Ana Kovač]]"
+status: draft
+tags: [sync, protocol]
+---
+
+{/* X1 acceptance fixture (handbook 6.8): registry components, CEL
+    expressions, a Logseq query, a block reference, a registry import and
+    one unknown component. Round-trips byte-exact; renders without
+    JavaScript when published. */}
+
+# Reconnect flow
+
+A token refresh must never drop the socket. We keep the room open,
+swap the token and resume from the last acked `seq`.
+
+<Callout kind="decision">
+  Refresh happens on the open connection; reconnect is the fallback.
+</Callout>
+
+## Sequence
+
+1. The client sees `unauthenticated` with reason `token`.
+2. It refreshes and re-sends `hello` on the same socket.
+3. The hub replays from `since_seq` ([[Sync protocol#Frames]]).
+
+## Work in flight
+
+<WorkView where="is_a('story') && resolved.epic == page('Sync v2')"
+  layout="table" columns={["key", "title", "status", "due"]} />
+
+{{query (and (task TODO DOING) [[Reconnect flow]])}}
+
+Progress of the epic today: {block(page('Sync v2')).resolved.progress}%.
+
+- ((KB-341)) owns the client change.
+
+import { Chart } from "@ocean/components"
+
+<Chart of={members_of('Sync v2')} by="status" kind="bar" />
+
+<Tweet id="1725" />
