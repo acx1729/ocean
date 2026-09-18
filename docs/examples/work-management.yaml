@@ -1,0 +1,114 @@
+# A Jira-style delivery project declared with the atoms of handbook section
+# 6.7: work items with attributes, one home each, virtual collections, views
+# that are conditions, and rules over attributes. This is the R1 acceptance
+# fixture: the loader is part of R1 and the R1 tests run against this file.
+# Expressions are CEL in the M9 environment (handbook 6.5 and 6.7).
+project: delivery
+
+attributes:                                   # property_definitions
+  status:       {kind: select, options: [backlog, todo, in_progress, in_review, done, canceled]}
+  priority:     {kind: select, options: [p0, p1, p2, p3]}
+  area:         {kind: select, options: [sync, editor, platform]}
+  assignee:     {kind: user}
+  due:          {kind: date}
+  estimate:     {kind: number}                # story points
+  completed_at: {kind: date}
+  progress:     {kind: number, derived: true} # written only by a derivation
+  epic:         {kind: relation, relation: in_epic}
+  sprint:       {kind: relation, relation: in_sprint}
+  blocked_by:   {kind: relation, relation: blocks, edge_props: {reason: text}}
+  owner:        {kind: user}
+  target_date:  {kind: date}
+  starts:       {kind: date}
+  ends:         {kind: date}
+
+relations:                                    # relation_types
+  in_epic:   {targets: [epic], inverse: stories}
+  in_sprint: {targets: [sprint], inverse: items}
+  blocks:    {inverse: blocked_by, dag: true}
+
+types:                                        # block_types; every one extends the shipped `work`
+  story:   {extends: work, required: [status, area], defaults: {status: backlog, priority: p2}}
+  bug:     {extends: story, required: [status, area, priority]}
+  subtask: {extends: work, required: [status], defaults: {status: todo}}
+  epic:                                       # a collection type: members are computed, never stored
+    extends: work
+    attributes: [owner, target_date, progress]
+    collection: {members: "props.epic == self.id", rollup: all}
+  sprint:
+    extends: work
+    attributes: [starts, ends, progress]
+    collection: {members: "props.sprint == self.id"}
+  area:                                       # a select value promoted to a collection with identity
+    extends: work
+    attributes: [owner, area]
+    collection: {members: "props.area == self.props.area"}
+
+views:                                        # view blocks: a condition, a layout, a grouping, a sort
+  board:   {of: "is_a('story') && has(props.sprint)", layout: board, group_by: status, sort: [priority, due]}
+  backlog: {of: "is_a('story') && !has(props.sprint) && props.status != 'done'", layout: list, sort: [priority]}
+  overdue: {of: "has(props.due) && props.due < now && !(props.status in ['done', 'canceled'])", layout: table}
+  roadmap: {of: "is_a('epic')", layout: timeline, start: created_at, end: target_date}
+
+rules:
+  - name: story-lifecycle                     # a workflow is change rules on `status`; status is not special
+    kind: change
+    on: status
+    transitions:
+      - {from: [backlog, todo], to: [in_progress], guard: "has(props.assignee)"}
+      - {from: [in_progress], to: [in_review], require: [estimate]}
+      - {from: [in_review], to: [done, in_progress]}
+      - {to: [canceled], guard: "principal.role in ['lead', 'admin']"}
+  - name: p0-is-for-leads
+    kind: change
+    on: priority
+    transitions:
+      - {to: [p0], guard: "principal.role in ['lead', 'admin']"}
+  - name: stay-in-area-when-changing-epic     # moving between collections is an attribute change
+    kind: change
+    on: epic
+    guard: "!has(props.epic) || block(props.epic).props.area == props.area"
+  - name: home-of-a-story                     # moving in the home tree is an attribute change too
+    kind: change
+    on: parent
+    types: [story]
+    guard: "parent.type in ['epic', 'page']"
+  - name: due-before-work-starts
+    kind: constraint
+    when: "is_a('story')"
+    assert: "props.status != 'in_progress' || has(props.due)"
+  - name: inherit-epic-from-home              # a story placed under an epic in the outline belongs to it
+    kind: derivation
+    types: [story, subtask]
+    set: epic
+    expr: "has(props.epic) ? props.epic : parent.resolved.epic"
+  - name: progress                            # one rollup, two collection types
+    kind: derivation
+    types: [epic, sprint]
+    set: progress
+    expr: "count(members) == 0 ? 0.0 : count(members.filter(m, m.resolved.status == 'done')) * 100.0 / count(members)"
+  - name: no-closing-with-open-stories
+    kind: constraint
+    types: [epic]
+    assert: "props.status != 'done' || members.all(m, m.resolved.status in ['done', 'canceled'])"
+  - name: stamp-completion
+    kind: reaction
+    on: "change('status')"
+    when: "props.status == 'done'"
+    do: ["set('completed_at', now)"]
+  - name: due-tomorrow
+    kind: reaction
+    on: "at(props.due - duration('24h'))"
+    when: "!(props.status in ['done', 'canceled'])"
+    do: ["notify(props.assignee, 'due tomorrow')"]
+  - name: monday-triage
+    kind: reaction
+    on: "schedule('0 9 * * 1')"
+    scope: "is_a('bug') && props.status == 'backlog' && !has(props.assignee)"
+    do: ["notify(group('triage'), 'unassigned bug in the backlog')"]
+
+dry_run:                                      # RulesService.DryRun: nothing is written
+  scope: "members_of('EPIC-12')"
+  changes:
+    - {block: "KB-341", set: {status: done}}
+  report: [violations, resolved_diff, reactions]

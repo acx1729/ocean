@@ -730,10 +730,10 @@ cost caps of specification section 8.
 | K5 permissions surface | 2 | M6, M10 |
 | K6 importers | 3 | M11 |
 | K7 graph view and sidebar panes | 1 | K1 |
-| R1 virtual collections, rules and the resolver (section 6.7) | 5 | M5, M9 |
+| R1 virtual collections, rules and the resolver (section 6.7) | 6 | M5, M9 |
 | K8 comments and notifications (v1.1) | 2 | M5 |
 
-About 55 engineer-weeks by the specification's estimating style; platform,
+About 56 engineer-weeks by the specification's estimating style; platform,
 editor and knowledge tracks run in parallel. The order that shows value
 earliest: UI-0, M4, E1, K1, M5, M6, K5, M9, R1, K3, K2, K4, M10, M11 with K6,
 M12, K7, M13, M14.
@@ -749,56 +749,78 @@ declares a membership predicate: a CEL expression evaluated per candidate
 item, with `props` the item's attributes and `self` the collection, that
 says which work items are in it. Membership is never stored, it is computed.
 An epic is a custom collection type: a block with a title, an owner and a
-target date, and the predicate `props.epic == self.id`. A sprint, an area, a
-release, a team backlog, an objective and an overdue list are the same thing
-with a different predicate. Everything below is rules over attributes and
-collections.
+target date, and the predicate `props.epic == self.id`. A sprint, a release,
+an area, a team backlog and an objective are the same thing with a different
+predicate. The specification already makes `task`, `bug`, `feature` and
+`epic` rows of `block_types` that extend the shipped `work` type, not code;
+this section keeps that and gives `epic` a `collection` clause.
 
-**No hierarchy construct.** Nesting emerges from attributes. An epic is in an
-initiative because the epic's `initiative` attribute points to it; the
-initiative's members are epics, the epic's members are stories. Any depth,
-many at once (delivery: initiative, epic, story; ownership: team, person;
-planning: quarter, sprint), and an item is in every collection whose
-predicate it matches. Moving an item between collections is changing an
-attribute, so it is governed like any other change. The one structural
-hierarchy the platform keeps is the document outline, the CRDT tree that
-text editing needs; rules see it as `parent` and `path`, and page trees and
-namespaces (K2, K4) are built on it. Everything else is a collection.
+**One home.** Every work item lives in exactly one place: its position in
+the outline, under one `parent` (a block or a page) whose own parent is one
+block or page, up to the project. This primary hierarchy exists today:
+`blocks.parent_block_id`, `page_id`, `wbs_path` (ltree) and `depth`,
+`pages.parent_page_id`, `BlocksService.Move`, and `path` in the query
+environment. The home decides which doc stores the item, and with it the
+permission boundary (section 3.6), the keys, the breadcrumb and the project
+of its key. A sub-task is a child in the home tree; moving an item is a
+change of `parent`, governed by change rules like any attribute ("a story
+lives under an epic or a backlog page"). The home tree is the only hierarchy
+that is stored, and to the rule language it is just the keyed collection
+`parent == self.id`, so rollups and inheritance along it need nothing
+special.
 
-**Anonymous groups.** A view that groups by an attribute (`status` columns
-on a board, `area` sections in a list) produces one anonymous collection per
-distinct value at render time: no block, no attributes, no rules. When a
-value needs identity, an owner, a description or a rollup, it is promoted to
-a collection block with the predicate `props.area == 'sync'`. Two levels,
-never a third.
+**Many collections, no hierarchy construct.** Everything else is virtual and
+nests through attributes. An epic is in an initiative because the epic's
+`initiative` attribute points to it; the initiative's members are epics, the
+epic's members are stories. Any depth, many at once (delivery: initiative,
+epic, story; ownership: team, person; planning: quarter, sprint), and an
+item is in every collection whose predicate it matches while it lives in one
+home. The two compose: the derivation `has(props.epic) ? props.epic :
+parent.resolved.epic` makes a story placed under an epic in the outline
+belong to it without typing anything, while a story that lives in its team's
+page joins by setting `epic`. Moving between collections is changing an
+attribute, so it is governed like any other change.
+
+**Views are conditions.** A view is a predicate (the condition), a layout
+(table, board, list, calendar, timeline, gallery), a group-by attribute and
+a sort. It is a block (`view_programs` already stores a view block's
+compiled CEL), placeable inline, pinnable in the sidebar and shareable.
+Grouping by an attribute (`status` columns on a board, `area` sections in a
+list) produces one anonymous collection per distinct value at render time:
+no block, no attributes, no rules. When a value needs identity, an owner, a
+description or a rollup, it is promoted to a collection block with the
+predicate `props.area == self.props.area`. A work item is rendered in as
+many views as match it; nothing is copied and nothing moves.
 
 **Keyed and query-time collections.** The schema compiler classifies every
 collection type. A predicate is keyed when it contains an equality between an
-attribute and `self.id` or a constant that an index can serve
-(`props.epic == self.id`, `props.area == 'sync' && props.status != 'done'`);
-membership is then a lookup in `block_edges` or `block_properties`, and
-rollups over it are maintained incrementally. Any other predicate
-(`props.due < now && props.status != 'done'`) is query-time: membership and
-rollups are computed when read, through the M9 compiler, and never
-materialized. The schema editor shows the class beside the type, and a
+attribute and `self.id`, an attribute of `self` or a constant that an index
+can serve (`props.epic == self.id`, `props.area == 'sync' && props.status !=
+'done'`); membership is then a lookup in `block_edges` or
+`block_properties`, and rollups over it are maintained incrementally. Any
+other predicate (`props.due < now && props.status != 'done'`) is query-time:
+membership and rollups are computed when read, through the M9 compiler, and
+never materialized. The schema editor shows the class beside the type, and a
 materialized rollup over a query-time collection is refused at save time
 with the reason.
 
 **Rules.** Rules bind to attributes, never to a kind of attribute. One
 language (the M9 CEL environment plus `self`, `old`, `change`, `principal`,
-`members`, `in(rel)`, `members_of(id)` and `resolved`) and four moments to
+`parent`, `block(id)`, `members`, `members_of(id)`, `resolved`, the `map`
+and `filter` macros, and the aggregates `sum`, `avg`, `min`, `max` and
+`count` over lists, which compile to SQL aggregates) and four moments to
 run, which are the four kinds:
 
 | Kind | Declared as | Runs | On failure |
 | --- | --- | --- | --- |
 | Constraint | `when: type == 'task'`, `assert: has(props.due) \|\| props.status != 'in_progress'` | before commit, on the post-write state | write rejected with `SchemaViolation` naming the rule and the attribute |
-| Change | `on: change('status')`, `from: ['todo']`, `to: ['in_progress', 'canceled']`, `guard: has(props.assignee)`, `require: ['due']`; `from` and `to` are predicates over the old and new value of any attribute | before commit, when the named attribute changes | `FailedPrecondition` listing the values this principal may set, so the UI offers exactly those |
-| Derivation | on a collection type: `set: progress`, `expr: avg(members.map(m, m.resolved.progress))`; on an item type: `set: area`, `expr: props.area ?? in('epic').resolved.area` | by the indexer (materialized) or at read time (query-time collections), never in the write path | cannot fail: type errors are caught at save, an evaluation error yields null with a provenance note |
-| Reaction | `on: change('status')`, `when: props.status == 'done'`, `do: [set('completed_at', now), add_edge('done_by', me())]` | after commit, by the worker, as the automation principal | logged and retried; loops are cut by a depth limit |
+| Change | `on: change('status')`, `from: ['todo']`, `to: ['in_progress', 'canceled']`, `guard: has(props.assignee)`, `require: ['due']`; `from` and `to` are predicates over the old and new value of any attribute, and several pairs may be grouped under one name | before commit, when the named attribute changes | `FailedPrecondition` listing the values this principal may set, so the UI offers exactly those |
+| Derivation | on a collection type: `set: progress`, `expr: avg(members.map(m, m.resolved.progress))`; on an item type: `set: epic`, `expr: has(props.epic) ? props.epic : parent.resolved.epic` | by the indexer (materialized) or at read time (query-time collections), never in the write path | cannot fail: type errors are caught at save, an evaluation error yields null with a provenance note |
+| Reaction | `on: change('status')`, or `at(props.due - duration('24h'))`, `schedule('0 9 * * 1')`, `event('doc.published')`; `when: props.status == 'done'`; `do: [set('completed_at', now), add_edge('done_by', me())]` | after commit, at the instant, on the schedule or on the event, by the worker, as the automation principal | logged and retried; loops are cut by a depth limit |
 
 Two more change rules show that nothing is special: `on: change('epic')`,
-`guard: in('epic').props.area == props.area` keeps a story in its area when
-it moves between epics; `on: change('priority')`, `to: ['p0']`, `guard:
+`guard: block(props.epic).props.area == props.area` keeps a story in its
+area when it changes epic; `on: change('priority')`, `to: ['p0']`, `guard:
 principal.role in ['lead', 'admin']` reserves P0. A workflow is the set of
 change rules on `status`, and the "allowed transitions" menu is
 `RulesService.AllowedValues(block, attr)`, which answers for any attribute.
@@ -806,13 +828,28 @@ Actions in reactions are a closed set: set or unset an attribute, add or
 remove an edge, set the type, move, append a block from a template, publish,
 notify; external webhooks stay R2 as the specification says.
 
+**Logic, in layers.** Logic runs in four layers, each more powerful and less
+guaranteed than the one before. Predicates decide membership, guards and
+constraints: CEL, no side effects, cost-capped. Derivations produce
+`resolved`: CEL, pure, incremental and confluent. Reactions have effects: a
+trigger (a change, an instant computed from attributes, a schedule or an
+event kind), a CEL condition and the closed action set, run by the worker as
+River jobs; a timer is a scheduled job that is re-armed when the attribute
+it is computed from changes and cancelled when the item leaves the rule's
+`when`; every run is retried, audited and loop-cut. Agents do the rest: an
+agent principal subscribed to `EventsService` (M5) and acting through MCP
+(M12) runs any logic under its own permissions, audited, which is where
+calls to other systems belong. Recurring items, SLA escalation, reminders,
+auto-assignment and status propagation are reactions; a rule never calls
+out of the process.
+
 **Rules over collections.** A rule on a collection type sees `members`; a
-rule on an item sees the collections it is in through its relation
-attributes (`in('epic')`, `in('sprint')`: the block for a single-valued
-relation, a list otherwise) and can name any collection with
-`members_of(id)`. Rollups are derivations on collection types, inheritance
-is a derivation on an item type reading `in(rel).resolved.x`, and a
-cross-collection constraint is `assert: props.status != 'done' ||
+rule on an item reaches its home through `parent` and its collections
+through the blocks its relation attributes point to (`block(props.epic)`,
+`block(props.sprint)`), and can name any collection with `members_of(id)`.
+Rollups are derivations on collection types, inheritance is a derivation on
+an item type reading `parent.resolved.x` or `block(props.epic).resolved.x`,
+and a cross-collection constraint is `assert: props.status != 'done' ||
 members.all(m, m.resolved.status == 'done')` on the epic. Because
 collections nest through attributes, an initiative's progress reads its
 epics' resolved progress, itself a rollup: derivations form a dependency
@@ -833,11 +870,12 @@ changes arrive. When attribute `a` of item `x` changes, the index job
 recomputes the derivations on `x` that read `a`; the derivations that read
 `a` over members on the keyed collections `x` was in before and is in after
 the change (both, since membership may have moved), then their dependents up
-the graph; and, when `x` is itself a collection, the derivations on its
-members that inherit from it. Fan-out is bounded per job (10,000 blocks);
-past the bound the job marks the collection `stale` and a follow-up job
-finishes. `AdminService.Recompute(project | rule)` rebuilds `resolved` from
-truth, and the confluence test below holds the incremental path to it.
+the graph; and, when `x` is itself a collection or a home, the derivations
+on its members and children that inherit from it. Fan-out is bounded per job
+(10,000 blocks); past the bound the job marks the collection `stale` and a
+follow-up job finishes. `AdminService.Recompute(project | rule)` rebuilds
+`resolved` from truth, and the confluence test below holds the incremental
+path to it.
 
 **Governed attributes and collaborative edits.** A CRDT edit cannot be
 refused after the fact without diverging clients, so an attribute that has a
@@ -865,44 +903,83 @@ changes is Resolve: a collection's members with their effective attributes
 and provenance; `Explain(block, attr)` is the single-item form.
 
 **Permissions.** A collection block is shared like any block; seeing it
-grants its rollups. Materialized rollups count every member in the project
-whatever the reader may open (a progress bar includes stories the reader
-cannot see); a type may declare `rollup: visible_to_reader`, which makes its
-rollups query-time and access-filtered. Provenance never lists a source the
-reader cannot view, it counts it. Reactions run as the project's automation
+grants its rollups and nothing on its members, whose permissions follow
+their home. Materialized rollups count every member in the project whatever
+the reader may open (a progress bar includes stories the reader cannot see);
+a type may declare `rollup: visible_to_reader`, which makes its rollups
+query-time and access-filtered. Provenance never lists a source the reader
+cannot view, it counts it. Reactions run as the project's automation
 principal and cannot write outside the project. No predicate crosses a
 workspace (K4 forbids cross-workspace joins); a federated collection is a
 per-workspace union at read time, never materialized.
 
+**Evidence: what the atoms cover.** The table maps what Jira, ClickUp and
+Notion are used for to the atoms and to where each stands. "Exists" means
+the table, index or RPC is in the tree today
+(`internal/db/migrations/00001_init.sql`, `proto/kb/v1`).
+
+| Need | Known as | Atoms | Stands |
+| --- | --- | --- | --- |
+| Custom fields | Jira and ClickUp custom fields, Notion properties | `property_definitions` (text, number, date, select, multi-select, relation, user, checkbox, url; options and relation config), `block_properties` typed columns, `blocks.attributes` with a GIN index | exists |
+| Item types with inheritance and defaults | Jira issue types, ClickUp task types, Notion databases | `block_types` (`extends_type_id`, `required_props`, `allowed_props`, `defaults`, `numbered`, `owns_doc`); `work` with shipped subtypes | exists |
+| Stable keys across moves | `PROJ-123` | `blocks.key`, `block_keys` with old keys kept as aliases after a cross-project move | exists |
+| One home, sub-tasks, breadcrumbs | Jira parent and sub-task, ClickUp home list, Notion page tree | `parent_block_id`, `page_id`, `wbs_path`, `depth`, `pages.parent_page_id`, `BlocksService.Move`, `path` | exists |
+| Items in many groupings | Jira epics, sprints, versions and components; ClickUp tasks in multiple lists | collection types (`collection_capable` plus the `members` predicate), relation attributes | R1 |
+| Dependencies and blocking | Jira issue links, ClickUp dependencies | `relation_types` (inverse name, symmetric, `dag`, source and target types), `block_edges`, edge metadata (6.5) | exists; edge metadata R1 |
+| Lifecycles | Jira workflows: statuses, transitions, conditions, validators, post functions | change rules (`from`, `to`, `guard`, `require`) and reactions on any attribute; `SetProperties` as the one strict path; `AllowedValues` | R1 |
+| Required fields and validation | Jira field configurations and validators | `required_props`, `compliant` and `invalid_props` today; constraints | partly exists; R1 |
+| Rollups, formulas, progress | Notion rollups and formulas, Jira epic progress, ClickUp progress | derivations into `resolved` with provenance, incremental | R1 |
+| Boards, lists, tables, calendars, timelines, saved filters | Jira boards and JQL filters, ClickUp views, Notion views | view blocks (`view_programs`) with a predicate, layout, group-by and sort; `QueryService` | M9, K3 |
+| Automation, SLAs, recurring items, reminders | Jira Automation, ClickUp Automations, Notion automations | reactions with change, instant, schedule and event triggers; agents through MCP for anything external | R1, M12 |
+| Portfolio hierarchy | Jira Advanced Roadmaps: initiative, epic, story | collections nested through attributes, rollups across strata, the timeline view | R1, K3 |
+| Permissions per project, item and field | Jira permission and issue-security schemes, ClickUp privacy | schemes compiled to OpenFGA, the doc as permission unit, `Restrict`, governed attributes, `rollup: visible_to_reader` | M6, R1 |
+| History and audit | Jira history, ClickUp activity | `audit_log`, per-doc CRDT history, `rule_runs` | exists; runs R1 |
+| Search | JQL, ClickUp filters, Notion search | CEL over attributes, edges, paths and full text (`tsv`, trigram) compiled to SQL | draft, M9 |
+| Comments, mentions, notifications | everywhere | K8 | v1.1 |
+
+**A worked example.** `docs/examples/work-management.yaml` declares a
+Jira-style project with nothing but these atoms: `story`, `bug` and
+`subtask` extending `work`; `epic`, `sprint` and `area` as collection
+types; a lifecycle for `status` and a guard on `priority`; a guard on the
+home; inheritance of `epic` from the home; one progress rollup shared by two
+collection types; four views; a reminder, a schedule and a dry run. It is
+the R1 acceptance fixture: the loader for it is part of R1 and the tests
+below run against it.
+
 **Interfaces.** `RulesService` (`ListRules`, `PutRules` versioned, `DryRun`
 streaming, `Explain`, `AllowedValues`); collection types are ordinary
 `SchemaService` types with a `collection` clause (`members`, `rollup`);
-`Block.resolved_props`; CEL functions `members`, `members_of`, `in` and the
-`resolved` map; tables `rules`, `rule_runs`, `resolution_provenance` and the
-column `blocks.resolved`. There is no collections service and no workflow
-service: a collection is a block whose members are a query, and a workflow
-is rules on an attribute.
+`Block.resolved_props`; CEL symbols `parent`, `block`, `members`,
+`members_of`, `resolved` and the aggregates; reaction triggers `change`,
+`at`, `schedule` and `event`; tables `rules`, `rule_runs`, `rule_timers`,
+`resolution_provenance` and the column `blocks.resolved`. There is no
+collections service and no workflow service: a collection is a block whose
+members are a query, and a workflow is rules on an attribute.
 
-**Limits.** 500 rules per project; the expression cost caps of specification
-section 8; 16 derivation strata; 10,000 blocks of fan-out per index job;
-100,000 items per dry run, streamed; `members` pages like any list.
+**Limits.** 500 rules and 1,000 schedules per project; the expression cost
+caps of specification section 8; 16 derivation strata; 10,000 blocks of
+fan-out per index job; 100,000 items per dry run, streamed; `members` pages
+like any list.
 
-**Tests that define done.** Confluence: random rule sets and random write
-sequences over a seeded project, and after every step the incremental
-`resolved` equals `Recompute` from scratch. Safety: no committed state
-violates an enabled constraint, and a refused change leaves no trace in
-truth, projection or outbox. Membership: for every keyed collection the
-index lookup equals the predicate evaluated in-process. Dry-run fidelity:
-applying a report's hypothetical changes for real reproduces the report.
+**Tests that define done.** All of them run against the worked example.
+Confluence: random rule sets and random write sequences over a seeded
+project, and after every step the incremental `resolved` equals `Recompute`
+from scratch. Safety: no committed state violates an enabled constraint, and
+a refused change leaves no trace in truth, projection or outbox. Membership:
+for every keyed collection the index lookup equals the predicate evaluated
+in-process. Dry-run fidelity: applying a report's hypothetical changes for
+real reproduces the report. Timers: a reaction on `at(props.due -
+duration('24h'))` fires once within a minute of the instant, re-arms when
+`due` moves and never fires for an item that left the rule's `when`.
 Isolation: no resolved value or provenance source crosses a project.
 Performance: a status change on a story under an initiative with 10,000
 descendants updates the rollup chain within the M5 index-lag SLO.
 
 **Why this is the clean design.** One noun exists (the work item), one is
-derived (the collection, a predicate), one language (CEL), one strict write
-path (`SetProperties`), one projection (`resolved`) and one report (the dry
-run). Nothing in the platform knows what an epic, a sprint or a status is;
-only the schema a project wrote does.
+derived (the collection, a predicate), one home per item, one language
+(CEL), one strict write path (`SetProperties`), one projection (`resolved`)
+and one report (the dry run). Nothing in the platform knows what an epic, a
+sprint or a status is; only the schema a project wrote does.
 
 ---
 
@@ -1166,9 +1243,9 @@ handling, the cost estimate, the plan cache, the service, tests.
   `stats`. `include: EDGES` joins `block_edges`.
 - Limits (§8): 200 AST nodes, `in` lists ≤ 1000, page size ≤ 500, cost ≤ 50
   units, 8 concurrent queries per principal (`rate_limits` or a semaphore).
-- Collections and resolved attributes (section 6.7): `members`,
-  `members_of(id)`, `in(rel)` and `resolved.x` belong to the environment from
-  the start; `members` of a keyed collection compiles to a lookup on
+- Collections and resolved attributes (section 6.7): `parent`, `block(id)`,
+  `members`, `members_of(id)`, `resolved.x` and the aggregates belong to the
+  environment from the start; `members` of a keyed collection compiles to a lookup on
   `block_edges` or `block_properties`, of a query-time collection to a
   subquery of its predicate under the same cost caps.
 - Differential test: seed a workspace (start with a few thousand blocks;
