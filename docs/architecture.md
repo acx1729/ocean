@@ -423,7 +423,115 @@ small once M9/M10 provide the RPCs and are listed under M14 below.
 
 ---
 
-## 5. The remaining milestones
+## 5. Editing and collaboration surface
+
+**Decision: one document model, several lenses.** A page is a Loro tree of
+blocks whose content is Markdown in a LoroText. Every view is a lens over that
+text, and every edit, however native it looks, is a text edit on one block.
+Collaboration, presence, undo, history and offline therefore behave
+identically in every lens, because they only know text positions and block
+ids. The specification placed WYSIWYG editing in R2; this design is additive
+(model, sync client, projections and server are untouched, and Source mode is
+what exists today), so it runs as its own track right after M4.
+
+### 5.1 Lenses
+
+| Lens | What the user sees | How editing works |
+| --- | --- | --- |
+| **Native** (default) | Notion-like page: rendered blocks, hidden Markdown syntax, block handles, slash menu, floating format bubble | Live preview in CodeMirror 6: syntax is hidden by decorations except around the caret; bold, headings, checkboxes, links, callouts render in place. Formatting commands are Markdown transforms (toggle bold on a range inserts or removes `**`). |
+| **Source** | The block's Markdown, monospace, syntax highlighted | Plain CodeMirror, the editor that exists today |
+| **Split** | Source on the left, rendered page on the right, aligned by block | The left pane edits; the right pane is read-only rendering with the active block highlighted and scroll locked by block id, never by line ratio |
+| **Read** | Rendered page, no editing affordances | What viewer roles and published pages get; presence of editors stays visible |
+
+The mode is a segmented control in the page header (Native · Source · Split),
+cycled with Ctrl/Cmd-E, remembered per page per user, shareable through
+`?view=split`. Read is automatic for viewer roles.
+
+### 5.2 Why CodeMirror live preview for Native
+
+One editor engine, one Loro binding (already written and tested), one position
+space, almost nothing added to the bundle. Obsidian's live preview proves the
+feel can be fully native. A ProseMirror or Milkdown lens can be added later as
+a fourth lens without touching the model; it would cost roughly 150 KB gzip
+and a re-parse-on-remote-change path that is much harder to test.
+
+### 5.3 Presenting collaboration
+
+Presence already carries a block id plus stable Loro cursors, so it maps into
+every lens exactly.
+
+- **Header.** Stacked avatars of everyone on the page, colored from their DID;
+  hover shows name and mode; click follows them (the view keeps their block in
+  sight until you move).
+- **Block rail.** A thin colored bar on the left edge of any block a peer is
+  in, with a name chip on hover; the same rail in Native and Source, both
+  panes in Split.
+- **Inside the focused block.** Remote carets with name flags and translucent
+  selections.
+- **Preview pane.** A peer's caret maps through the parser's source map to the
+  rendered node and shows as a colored underline on that node; node
+  granularity is enough there.
+- **Sync state.** One pill: Saved, Saving, Offline with pending count. No modal
+  ever interrupts editing; reconnection converges silently.
+- **No locks and no "someone is editing" warnings.** The CRDT makes them
+  unnecessary; the rail is information, not a gate.
+
+```
++ sidebar --+----------------------------------------------------------+
+| Projects  |  < Documents        Native . Source . Split   (o)(o) Saved|
+| Pages     |                                                          |
+| Work      |  # Title                                                 |
+|           |  | paragraph rendered, syntax hidden...      (Ada is here)|
+|           |    [ ] task item                                         |
+|           |  | > callout                                             |
++-----------+----------------------------------------------------------+
+```
+
+### 5.4 Visual language
+
+Minimal chrome: no persistent toolbar, a contextual bubble on selection, a
+slash menu on `/`, a command palette on Ctrl/Cmd-K, a status bar with word
+count and sync state. A 720 px prose column, Inter or the system font for
+prose and a monospace face for source, calm color tokens with full dark mode,
+motion of 150 ms at most. The tokens already live in `web/src/styles.css`.
+
+### 5.5 Test strategy
+
+Almost all behavior sits in pure functions, so the tests are cheap and exact.
+
+1. **Transform layer (pure, TypeScript and Go).** Every Native command is a
+   function from Markdown plus a range to Markdown plus a new range. Property
+   tests (fast-check): apply a command and parse the result, assert the
+   structural change; apply twice, assert idempotence or exact inverse;
+   serialize and re-parse, assert identity. The shared Go and TypeScript
+   fixtures from M4 keep rendering rules identical to the server.
+2. **Source maps.** For every fixture, every rendered node maps back to a span
+   and every span maps to exactly one node; presence in the preview pane and
+   scroll alignment depend on this.
+3. **Editor extensions.** Vitest with jsdom over CodeMirror state: which ranges
+   are hidden for a given caret position, that decorations never swallow the
+   caret, that keymaps produce the expected transforms.
+4. **Collaboration end to end.** Playwright with browser contexts in different
+   modes (one Native, one Source, one Split): edits cross, presence appears in
+   the right place in each lens, offline edits flush, mode switches preserve
+   caret and scroll position.
+5. **Visual regression.** A dev-only gallery route renders every block kind in
+   every lens in light and dark; Playwright screenshots gate changes to
+   typography, spacing and color.
+6. **Budgets and accessibility.** Bundle size, 2,000-block page open time,
+   typing latency under 16 ms per keystroke, axe checks and a keyboard-only
+   editing pass in CI.
+
+### 5.6 The risk to name
+
+Markdown as truth means two people formatting the same characters at the same
+moment can produce interleaved markers. Block-level granularity and the
+parse-serialize normalization on each side keep that rare and self-healing,
+and the property tests cover it.
+
+---
+
+## 6. The remaining milestones
 
 Each section gives the goal, what already exists, the design that should be
 followed, the interfaces to produce, the tests that define done, and the
@@ -490,6 +598,45 @@ refs and properties; the materialization suite is green in both runtimes.
 **Traps.** goldmark's AST loses source positions for some inline constructs;
 capture byte spans while converting. Do not store the AST; `content` stays
 Markdown source. Headings inside outliner pages are ordinary blocks.
+
+### E1 — Editing and collaboration surface (3 weeks, after M4)
+
+**Goal.** The lenses and presence design of section 5: a Native lens with live
+preview, the Split lens with block-aligned scroll, the Read lens, mode
+switching, the presence rail and follow mode, and the test harness that keeps
+them honest.
+
+**What exists.** The Source lens (`web/src/app/editor/BlockEditor.tsx`), the
+CodeMirror to LoroText binding, remote carets from stable Loro cursors,
+per-block presence chips, the sync pill, the sanitized Markdown renderer, the
+design tokens.
+
+**Deliverables.**
+
+- A `transforms` module (pure functions, shared fixtures with Go): toggle
+  emphasis and strong, set heading level, toggle task, wrap in quote or
+  callout, set list kind, insert link or wikilink, with property tests.
+- CodeMirror extensions for live preview: syntax hiding around the caret,
+  inline widgets (checkbox, link, image, inline code), block widgets (table,
+  math, code with language), all mapped through the M4 source maps.
+- Slash menu, selection bubble, block handles with drag reorder (moves are
+  `tree.move`), Ctrl/Cmd-K palette.
+- Split lens with block-keyed scroll sync; Read lens for viewers; mode switch
+  with per-page memory and `?view=`.
+- Presence rail in every lens, follow mode, caret mapping into the preview
+  pane through source maps.
+- Dev gallery route and Playwright visual regression in light and dark; the
+  mixed-mode collaboration scenario in the e2e suite; budgets in CI.
+
+**Done when.** A page can be written entirely in Native without seeing
+Markdown syntax, the same page edits identically in Source, Split keeps both
+panes aligned under remote edits, the visual snapshots are stable, and the
+initial JS budget still passes.
+
+**Traps.** Never let a lens hold state the model does not have (collapsed
+state, for example, belongs to the doc as a block property or to the user's
+local view, never to the DOM). Keep every command a text transform; the moment
+a command edits the AST directly, the two lenses diverge.
 
 ### M5 — Projections and the worker (3 weeks)
 
@@ -851,7 +998,7 @@ and complete the documentation.
 
 ---
 
-## 6. Engineering rules that keep the system honest
+## 7. Engineering rules that keep the system honest
 
 These are conventions the existing code follows; new code should too.
 
@@ -884,7 +1031,7 @@ These are conventions the existing code follows; new code should too.
 
 ---
 
-## 7. Known gaps, open decisions and risks
+## 8. Known gaps, open decisions and risks
 
 Open decisions carried from §14: contract-wallet support without an RPC
 URL (currently refused), audit retention default (forever vs one year with
@@ -912,7 +1059,7 @@ production install).
 
 ---
 
-## 8. A reading plan for the first week
+## 9. A reading plan for the first week
 
 1. Run it: `docs/running-locally.md`, then create a workspace and a page,
    open it in two tabs. Read `cmd/kb/main.go` and `internal/app/wire.go`
