@@ -1,0 +1,14 @@
+# TypeScript code generation for the web app: `npm run gen` (run from web/).
+# The generated files under src/gen/ are committed so that the Go build never needs Node.
+version: v2
+inputs:
+  - directory: ../proto
+    paths:
+      - ../proto/kb
+plugins:
+  - local: node_modules/.bin/protoc-gen-es
+    out: src/gen
+    include_imports: true
+    opt:
+      - target=ts
+      - import_extension=none

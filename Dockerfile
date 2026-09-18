@@ -9,10 +9,11 @@ RUN cargo build --release
 
 FROM node:22-bookworm AS web
 WORKDIR /src/web
-COPY web/package.json web/package-lock.json* ./
-RUN if [ -f package.json ]; then npm ci; fi
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
 COPY web ./
-RUN if [ -f package.json ]; then npm run build; fi
+# vite writes to ../internal/web/dist, which the Go build embeds.
+RUN npm run build
 
 FROM golang:1.26-bookworm AS build
 ARG VERSION=0.0.0-dev
@@ -22,7 +23,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=loro /src/rust/loro-cabi/target/release/libloro_cabi.a rust/loro-cabi/target/release/libloro_cabi.a
-COPY --from=web /src/web/dist internal/web/dist
+COPY --from=web /src/internal/web/dist internal/web/dist
 RUN CGO_ENABLED=1 go build -trimpath \
       -ldflags "-X github.com/acx1729/ocean/internal/version.Version=${VERSION} -X github.com/acx1729/ocean/internal/version.Commit=${COMMIT}" \
       -o /out/kb ./cmd/kb

@@ -1,0 +1,5 @@
+node_modules
+src/gen
+playwright-report
+test-results
+package-lock.json

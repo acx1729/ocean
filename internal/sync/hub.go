@@ -187,6 +187,40 @@ type subscriber struct {
 	clientID  string
 	principal string
 	send      func(*kbv1.SyncFrame) bool // false when the sink is gone
+
+	// A subscriber joins its room before the open transaction reads the doc so
+	// that no update committed during the read is lost; frames that arrive in
+	// that window wait here until the opened frame has been sent.
+	mu     sync.Mutex
+	gated  bool
+	queued []*kbv1.SyncFrame
+}
+
+func newSubscriber(clientID, principal string, send func(*kbv1.SyncFrame) bool) *subscriber {
+	return &subscriber{clientID: clientID, principal: principal, send: send, gated: true}
+}
+
+// deliver sends a frame, or queues it while the subscriber is still gated.
+func (s *subscriber) deliver(frame *kbv1.SyncFrame) bool {
+	s.mu.Lock()
+	if s.gated {
+		s.queued = append(s.queued, frame)
+		s.mu.Unlock()
+		return true
+	}
+	s.mu.Unlock()
+	return s.send(frame)
+}
+
+// release flushes the queued frames and delivers directly from now on.
+func (s *subscriber) release() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, f := range s.queued {
+		s.send(f)
+	}
+	s.queued = nil
+	s.gated = false
 }
 
 type awareEntry struct {
@@ -208,11 +242,19 @@ func (r *room) join(s *subscriber) {
 	r.mu.Unlock()
 }
 
+// leave removes a subscriber and tells the remaining peers that its presence
+// is gone (an empty awareness state), so cursors vanish without waiting for
+// the TTL.
 func (r *room) leave(s *subscriber) {
 	r.mu.Lock()
+	_, present := r.subs[s]
 	delete(r.subs, s)
+	_, hadAwareness := r.awareness[s.clientID]
 	delete(r.awareness, s.clientID)
 	r.mu.Unlock()
+	if present && hadAwareness {
+		r.fanout(&kbv1.SyncFrame{Kind: &kbv1.SyncFrame_Awareness{Awareness: &kbv1.Awareness{DocId: r.docID, Peer: s.clientID}}}, nil)
+	}
 }
 
 // fanout delivers a frame to every subscriber except the sender.
@@ -226,7 +268,7 @@ func (r *room) fanout(frame *kbv1.SyncFrame, except *subscriber) {
 	}
 	r.mu.Unlock()
 	for _, s := range subs {
-		if !s.send(frame) {
+		if !s.deliver(frame) {
 			r.leave(s)
 		}
 	}
@@ -243,7 +285,7 @@ func (r *room) closeAll(reason string) {
 	r.mu.Unlock()
 	frame := &kbv1.SyncFrame{Kind: &kbv1.SyncFrame_Close{Close: &kbv1.Close{DocId: r.docID, Reason: reason}}}
 	for _, s := range subs {
-		s.send(frame)
+		s.deliver(frame)
 	}
 }
 

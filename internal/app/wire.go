@@ -14,6 +14,7 @@ import (
 	kbsync "github.com/acx1729/ocean/internal/sync"
 	"github.com/acx1729/ocean/internal/truth"
 	"github.com/acx1729/ocean/internal/version"
+	"github.com/acx1729/ocean/internal/web"
 )
 
 // wire constructs the subsystems and services this role serves. Every service
@@ -67,6 +68,18 @@ func (a *App) wire(ctx context.Context) error {
 		a.services.Schema = svcs.Schema
 		a.services.Pages = svcs.Pages
 		a.services.Blocks = svcs.Blocks
+
+		// The web app is embedded in the binary and served by the API role.
+		if a.cfg.WebApp {
+			app := web.Handler("/app/", web.Config{
+				PublicURL: a.cfg.PublicURL, SyncURL: a.cfg.SyncURL, Version: version.Version, Dev: a.cfg.Dev, Wallets: true,
+			})
+			a.routes = append(a.routes, func(mux *http.ServeMux) {
+				mux.Handle("/app/", app)
+				mux.Handle("/app", http.RedirectHandler("/app/", http.StatusPermanentRedirect))
+				mux.Handle("/{$}", http.RedirectHandler("/app/", http.StatusFound))
+			})
+		}
 	}
 	return nil
 }

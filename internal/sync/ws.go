@@ -263,21 +263,27 @@ func (cn *conn) handleOpen(ctx context.Context, req *kbv1.OpenRequest) {
 		cn.sendFrame(errorFrame(req.GetDocId(), errf(CodeTooManyDocs, "at most %d open docs per connection", cn.h.Limits.OpenDocsPerConn)))
 		return
 	}
+	// Join before reading so that an update committed during the read still
+	// reaches this client; the subscriber stays gated (frames queue) until the
+	// opened frame is out, and nothing is delivered if the open is refused.
+	r := cn.h.room(cn.sess.ws, req.GetDocId())
+	sub := newSubscriber(cn.sess.clientID, cn.sess.id.Principal, cn.sendFrame)
+	r.join(sub)
 	res, err := cn.h.open(ctx, cn.sess, req)
 	if err != nil {
+		r.leave(sub)
+		cn.h.dropIfEmpty(r)
 		cn.sendFrame(errorFrame(req.GetDocId(), err))
 		return
 	}
-	r := cn.h.room(cn.sess.ws, req.GetDocId())
-	sub := &subscriber{clientID: cn.sess.clientID, principal: cn.sess.id.Principal, send: cn.sendFrame}
 	cn.mu.Lock()
 	if old, ok := cn.docs[req.GetDocId()]; ok {
 		old.room.leave(old.sub)
 	}
 	cn.docs[req.GetDocId()] = &docSub{room: r, sub: sub}
 	cn.mu.Unlock()
-	r.join(sub)
 	cn.sendFrame(&kbv1.SyncFrame{Kind: &kbv1.SyncFrame_Opened{Opened: res}})
+	sub.release()
 	for _, aw := range r.currentAwareness(cn.sess.clientID, cn.h.Now()) {
 		cn.sendFrame(&kbv1.SyncFrame{Kind: &kbv1.SyncFrame_Awareness{Awareness: aw}})
 	}

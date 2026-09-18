@@ -6,7 +6,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS := -X github.com/acx1729/ocean/internal/version.Version=$(VERSION) -X github.com/acx1729/ocean/internal/version.Commit=$(COMMIT)
 LORO_LIB := rust/loro-cabi/target/release/libloro_cabi.a
 
-.PHONY: all build loro proto lint test test-short web docker dev-env clean tools
+.PHONY: all build loro proto lint test test-short web e2e docker dev-env clean tools
 
 all: build
 
@@ -43,9 +43,13 @@ test: loro
 test-short: loro
 	go test -short -count=1 ./...
 
-## web: build the web app into internal/web/dist
+## web: build the web app into internal/web/dist (embedded by `make build`)
 web:
 	cd web && npm ci && npm run build
+
+## e2e: browser tests against bin/kb and the local test Postgres (see web/scripts/e2e-server.mjs)
+e2e: build
+	cd web && npx playwright test
 
 ## docker: build the container image
 docker:

@@ -1,0 +1,14 @@
+{
+  "name": "@kb/sync-client",
+  "version": "0.1.0",
+  "description": "Framework-free TypeScript client for the kb.v1 SyncService WebSocket protocol: one socket per tab multiplexing Loro docs, offline queue, IndexedDB cache, awareness.",
+  "private": true,
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "sideEffects": false,
+  "peerDependencies": {
+    "@bufbuild/protobuf": "^2.7.0",
+    "loro-crdt": "^1.16.0"
+  }
+}
