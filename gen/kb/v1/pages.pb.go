@@ -410,8 +410,12 @@ type ListPagesRequest struct {
 	JournalsOnly   bool                   `protobuf:"varint,6,opt,name=journals_only,json=journalsOnly,proto3" json:"journals_only,omitempty"`
 	IncludeTrashed bool                   `protobuf:"varint,7,opt,name=include_trashed,json=includeTrashed,proto3" json:"include_trashed,omitempty"`
 	CountMode      CountMode              `protobuf:"varint,8,opt,name=count_mode,json=countMode,proto3,enum=kb.v1.CountMode" json:"count_mode,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Case-insensitive title prefix filter (link autocomplete).
+	TitlePrefix string `protobuf:"bytes,9,opt,name=title_prefix,json=titlePrefix,proto3" json:"title_prefix,omitempty"`
+	// Exact normalized title match (link resolution).
+	Title         string `protobuf:"bytes,10,opt,name=title,proto3" json:"title,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListPagesRequest) Reset() {
@@ -498,6 +502,20 @@ func (x *ListPagesRequest) GetCountMode() CountMode {
 		return x.CountMode
 	}
 	return CountMode_COUNT_MODE_UNSPECIFIED
+}
+
+func (x *ListPagesRequest) GetTitlePrefix() string {
+	if x != nil {
+		return x.TitlePrefix
+	}
+	return ""
+}
+
+func (x *ListPagesRequest) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
 }
 
 type ListPagesResponse struct {
@@ -2317,7 +2335,7 @@ const file_kb_v1_pages_proto_rawDesc = "" +
 	"\x06blocks\x18\x02 \x03(\v2\f.kb.v1.BlockR\x06blocks\x12\x1a\n" +
 	"\bmarkdown\x18\x03 \x01(\tR\bmarkdown\x12\x1f\n" +
 	"\vindexed_seq\x18\x04 \x01(\x03R\n" +
-	"indexedSeq\"\xae\x02\n" +
+	"indexedSeq\"\xe7\x02\n" +
 	"\x10ListPagesRequest\x12!\n" +
 	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\x1d\n" +
 	"\n" +
@@ -2328,7 +2346,10 @@ const file_kb_v1_pages_proto_rawDesc = "" +
 	"\rjournals_only\x18\x06 \x01(\bR\fjournalsOnly\x12'\n" +
 	"\x0finclude_trashed\x18\a \x01(\bR\x0eincludeTrashed\x12/\n" +
 	"\n" +
-	"count_mode\x18\b \x01(\x0e2\x10.kb.v1.CountModeR\tcountMode\"\x9c\x01\n" +
+	"count_mode\x18\b \x01(\x0e2\x10.kb.v1.CountModeR\tcountMode\x12!\n" +
+	"\ftitle_prefix\x18\t \x01(\tR\vtitlePrefix\x12\x14\n" +
+	"\x05title\x18\n" +
+	" \x01(\tR\x05title\"\x9c\x01\n" +
 	"\x11ListPagesResponse\x12!\n" +
 	"\x05pages\x18\x01 \x03(\v2\v.kb.v1.PageR\x05pages\x12\x1f\n" +
 	"\vnext_cursor\x18\x02 \x01(\tR\n" +

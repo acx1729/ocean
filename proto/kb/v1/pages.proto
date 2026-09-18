@@ -90,6 +90,10 @@ message ListPagesRequest {
   bool journals_only = 6;
   bool include_trashed = 7;
   CountMode count_mode = 8;
+  // Case-insensitive title prefix filter (link autocomplete).
+  string title_prefix = 9;
+  // Exact normalized title match (link resolution).
+  string title = 10;
 }
 
 message ListPagesResponse {
