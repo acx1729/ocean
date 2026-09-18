@@ -112,6 +112,9 @@ type Config struct {
 	// Dev relaxes transport-security assumptions (plain HTTP cookies) for local
 	// development. Never set in production.
 	Dev bool
+	// TrustProxy makes rate limiting and logging use X-Forwarded-For; enable it
+	// only behind an ingress that sets the header.
+	TrustProxy bool
 	// WebApp serves the embedded web app at /app.
 	WebApp bool
 	// Migrate applies embedded migrations at startup (the first process to take
@@ -243,6 +246,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		LogLevel:          getDefault("KB_LOG_LEVEL", "info"),
 		LogFormat:         getDefault("KB_LOG_FORMAT", "json"),
 		Dev:               getBool("KB_DEV", false),
+		TrustProxy:        getBool("KB_TRUST_PROXY", false),
 		WebApp:            getBool("KB_WEB_APP", true),
 		Migrate:           getBool("KB_MIGRATE", true),
 		DataDir:           getDefault("KB_DATA_DIR", "/var/lib/kb"),

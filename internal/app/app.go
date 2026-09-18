@@ -14,8 +14,10 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/acx1729/ocean/internal/auth"
 	"github.com/acx1729/ocean/internal/config"
 	"github.com/acx1729/ocean/internal/db"
+	"github.com/acx1729/ocean/internal/keyring"
 	"github.com/acx1729/ocean/internal/server"
 	"github.com/acx1729/ocean/internal/telemetry"
 	"github.com/acx1729/ocean/internal/version"
@@ -32,6 +34,12 @@ type App struct {
 	services server.Services
 	routes   []func(*http.ServeMux)
 	ready    []func(context.Context) error
+
+	node          *keyring.NodeKey
+	operatorToken string
+	keys          *keyring.KeyRing
+	authStore     *auth.Store
+	authn         *auth.Authenticator
 }
 
 // New opens the dependencies and builds the handler. It does not listen.
