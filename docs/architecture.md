@@ -531,7 +531,256 @@ and the property tests cover it.
 
 ---
 
-## 6. The remaining milestones
+## 6. Product scope for v1
+
+R1 as specified is the platform. v1 is the product on top of it: a complete
+Logseq, a Notion replacement for knowledge work, cross-workspace references,
+governed metadata, and two deployment profiles. This section is the contract
+for that scope; section 7 lists the platform milestones it depends on.
+
+### 6.1 Outcomes
+
+A v1 user can:
+
+- Sign in with a browser key or a wallet and create or join workspaces by DID.
+- Write in an outliner or a document, in Native, Source or Split (section 5),
+  alone or live with others, offline, on a laptop, in the browser and in the
+  macOS app.
+- Reference anything: pages, blocks, sub-documents and other workspaces, with
+  live transclusion, linked and unlinked references, and a graph view.
+- Model knowledge with types, typed properties, typed edges with metadata,
+  collections and saved views, and find it with full-text search or CEL.
+- Govern metadata: validation, workflow transitions, derived properties and
+  reactions declared as data and evaluated with CEL.
+- Share at workspace, project, page or block level, with groups, links and
+  publications, and see why anyone has access.
+- Import a Logseq graph, an Obsidian vault or a Notion export losslessly, and
+  export everything back as Markdown plus JSON.
+- Let agents work through MCP under their own permissions, audited.
+
+A v1 operator can install with one Compose file or one Helm chart, upgrade
+with one command, restore from backup within the RTO, and read every SLO on
+a bundled dashboard.
+
+### 6.2 Deployment profiles and scale requirements
+
+| Requirement | Self-host (Docker Compose) | Enterprise (Helm on Kubernetes) |
+| --- | --- | --- |
+| Shape | one container `KB_ROLE=all`, postgres:16, nats:2, SeaweedFS, pgBackRest | api, sync and worker Deployments with HPA; worker also scaled by KEDA on queue depth |
+| Reference sizing | 4 vCPU, 8 GB | api 3 x (1 vCPU, 1 GB), sync 2 x (1 vCPU, 2 GB), worker 3 x (2 vCPU, 2 GB), NATS 3 nodes, Postgres 8 vCPU / 32 GB with one streaming replica |
+| Users | up to 500 registered, 50 concurrent | 10K registered, 1K concurrent |
+| Blocks per workspace | 100K comfortably | 600K at the reference sizing; workspace sharding beyond |
+| Latency (p95) | write under 50 ms, query under 100 ms | the same at 200 qps |
+| Ingest | 1K block updates per second | 5K block updates per second on one primary |
+| Collaboration | 10 concurrent editors across 20 docs | 10K to 20K WebSocket connections per sync pod, rooms sharded on a ring |
+| Sync propagation | remote keystroke visible p95 under 200 ms on a LAN, under 500 ms over a WAN | the same |
+| Availability | single node; restart on failure | 99.9 percent monthly for API and sync; rolling upgrades worker, api, sync |
+| Durability | RPO 5 min (WAL archiving), RTO 30 min, nightly base backup, 14-day retention | the same with CloudNativePG and Barman Cloud; quarterly restore drill |
+| Identity | DIDs (browser keys, wallets) | DIDs plus an OIDC bridge that issues a custodial `did:key` per federated user (v1.1, enterprise ask) |
+| Isolation | RLS plus the workspace predicate; per-workspace keys | the same, plus pgbouncer transaction pooling, replicas for reads, quotas per workspace |
+| Observability | `/metrics`, JSON logs, optional OTLP | bundled Grafana dashboards and alert rules on the SLOs of specification section 13 |
+
+Scale is achieved by mechanisms already in the design, not by later
+rewrites: workspace-first keys on every table and no cross-workspace joins
+(sharding path), keyset pagination only, projections rebuildable from the
+log, the outbox for everything asynchronous, role-split processes, the sync
+ring, GIN and trigram indexes, FGA and plan caches, per-principal and
+per-workspace limits, and the k6 suites that fail CI on regression.
+
+### 6.3 Front-end stack
+
+One codebase for the web UI and the macOS app.
+
+| Layer | Choice |
+| --- | --- |
+| UI kit | shadcn/ui on Tailwind v4 and Radix primitives, lucide icons; owned components, no design-vendor runtime |
+| App | Vite, React, TypeScript, TanStack Query, react-router, CodeMirror 6, Loro, the sync client (what exists today; only the CSS layer changes) |
+| Data-heavy views | TanStack Table (table view), dnd-kit (board and drag reorder), react-resizable-panels (Split lens), react-day-picker (calendar view), cmdk (command palette), virtualized lists everywhere |
+| Desktop | Tauri 2 with the Go binary as a sidecar: same bundle, native window chrome, menu bar, keychain for the node key, `kb://` deep links, updater, notifications; the specification's "Electron spawns one child" becomes "Tauri spawns one sidecar" with identical behavior |
+
+Layout follows the Plane reference: an icon rail, a contextual sidebar, a
+breadcrumb header, a view switcher (list, board, calendar, table, timeline)
+and a filter button; cards show type icon and key, title, priority, status
+pill, date chip and avatars. Consequences: Playwright runs a WebKit project
+next to Chromium (Tauri renders through WebKit on macOS), and the Go binary
+is built per Apple architecture on macOS runners because of cgo.
+
+### 6.4 Knowledge packs
+
+**K1 Subdocs and transclusion.** Every block is addressable. `((id))` renders
+the source block live inline with a reference-count badge on the source;
+`{{embed ((id))}}` and `{{embed [[page]]}}` render the source subtree
+editable in place (a nested editor bound to the source doc; edits go to the
+source; presence crosses). Zoom into any block as a page with breadcrumbs;
+shift-click opens it in a right-sidebar pane. Model: the portal node written
+for boundaries becomes the general window onto another doc, one canonical
+portal (the boundary: permissions, moves, breadcrumbs) and any number of
+reference portals (embeds); the projection gains `portal_block_id`. Linked
+references grouped by page with breadcrumb context, unlinked references from
+search minus linked, both live. A reference renders only if the viewer can
+view the target doc, otherwise a placeholder showing nothing but the id;
+writing through an embed requires edit on the target.
+
+**K2 Logseq completeness.** Outliner operations (collapse state as a block
+property, multi-select, move up and down, drag, zoom), pages (aliases,
+`a/b/c` namespaces with namespace pages, page properties, tags, all pages,
+favorites, recents), journals (scheduled and deadline with repeaters, future
+dates, the scheduled-and-deadlines section), task markers and priorities,
+typed properties with autocomplete and property pages, simple queries in full
+with a table view and a query builder, advanced Datalog queries translated
+for the common patterns with the raw text preserved, templates with
+variables, right-sidebar panes, global and local graph view (sampled beyond a
+few thousand nodes), full-text and fuzzy search, keyboard-first everything,
+lossless Logseq graph import and export. Out of v1 by the specification:
+whiteboards (Canvas, R2), flashcards, PDF annotations, plugins.
+
+**K3 Notion replacement.** Nested page tree with icons and covers, rich
+blocks (toggle, callout, code, math, table, image, file, embed, table of
+contents; synced blocks are embeds), databases as types with typed
+properties, views (table, board, list, calendar, gallery, timeline) with a
+filter, sort and group builder compiling to CEL, inline view blocks,
+relations and rollups (CEL aggregates over edges, indexed when hot), formulas
+as CEL computed properties validated at save time, per-type templates, Notion
+export import (pages, databases to types and views, assets), a responsive
+layout for reading and basic editing on phones. Comments, mentions and
+notifications ship as v1.1: they need the M5 pipeline and their own model.
+
+**K4 Organization and cross-workspace references.** Five orthogonal axes,
+all queryable and all in the sidebar: hierarchy (workspace, project, page
+tree, namespaces), classification (types with inheritance, tags), attributes
+(typed properties and edges), collections (many per block through
+`member_of`), and views (saved CEL queries with a layout, placeable as blocks
+and pinnable as smart folders); the reference graph is the emergent sixth.
+Cross-workspace references keep the invariants: no cross-workspace joins or
+foreign keys, RLS unchanged, no content copied between workspaces.
+Addressing by `kb://{workspace}/{block}`; wikilinks accept a qualifier such
+as `[[acme::Page]]`. The source workspace stores the target as a URI in an
+external-edges table; backlinks in the target workspace are opt-in per
+workspace pair and shown only after a view check on the source; titles
+resolve at read time under the viewer's permission. Rendering and editing
+open the target doc through a sync connection to the target workspace (the
+client pools connections per workspace; the node holds every key). Search
+and views fan out per accessible workspace under each workspace's access
+filter, merged by sort key with composed keyset cursors; CEL gains
+`workspace in [...]`. Moving a page between workspaces is an export and
+import with a redirect table; publishing renders a foreign embed only when
+that content is published too; agent tokens need scopes in both workspaces.
+
+**K5 Permissions surface.** Scheme editor (roles, permissions, conditions), a
+share dialog on every page and block (people, groups, roles, an inherit
+toggle mapping to `Restrict(inherit)`, share links, publish), guests through
+doc-level grants without membership, groups administration, "who can see this
+and why" backed by Explain, an audit viewer, revocation closing open editors
+within seconds, agent consent screens, a cross-workspace grants view.
+
+**K6 Importers and exporters.** Logseq (ids, properties, queries, assets,
+config), Obsidian (wikilinks, aliases, callouts, frontmatter, embeds), Notion
+(HTML or Markdown plus CSV zip); export as a Logseq-compatible graph, plain
+Markdown and JSON, deterministic across runs.
+
+**K7 Graph view and sidebar panes.** Global and local graphs from
+`block_edges` and `pages`, sampled and filterable by type, tag and date;
+right-sidebar panes for pages, blocks, references and the graph.
+
+**K8 Comments and notifications (v1.1).** Block-anchored threads, mentions,
+resolution, a notification inbox fed by the events pipeline.
+
+### 6.5 Edges, metadata and CEL: search and governance
+
+Confirmed: the model supports rich edges and metadata, CEL searches over both,
+and CEL governs attribute changes. The pieces and where they live:
+
+**Edges with metadata.** Today an edge is `(source, target, kind,
+relation_type_id, origin)` projected from a relation property stored in the
+doc as a map of target id to `true`. v1 makes the map value a nested map of
+edge properties (`weight`, `role`, `since`, `until`, `note`, anything the
+relation type declares), so edge metadata is truth in the CRDT and projects
+to `block_edges.props` (JSONB with a GIN index). Relation types gain an
+`edge_props` schema (typed like block properties), keep their inverse names,
+symmetric and DAG flags, and can restrict source and target types. When an
+edge needs to be a first-class thing (comments, history, its own permissions),
+it is a block of a join type with two relations, which the model already
+allows.
+
+**CEL over edges and metadata.** The query environment adds
+`edges_out(rel)` and `edges_in(rel)` as lists of `Edge{target, props}` so
+predicates such as `edges_out('depends_on').exists(e, e.props.weight > 3 &&
+e.target.props.status != 'done')` compile to EXISTS semi-joins over
+`block_edges` with JSONB predicates, and `has_edge(rel, id)` stays. Property
+and edge metadata, system metadata (`created_by`, `updated_at`, `key`,
+`uri`, `path`, `depth`), full-text `search()` and cross-workspace scopes are
+all one environment; saved views, MCP `search_blocks` and the rule engine
+below share it. Every expression compiles to parameterized SQL under the cost
+caps of specification section 8.
+
+**Rules: CEL-governed attributes.** Rules are project-scoped data, versioned
+like schemes, edited in the UI with a dry run against existing blocks, and
+evaluated with the same CEL environment plus `old` (state before the write),
+`change` (the property ids and edges touched) and `principal` (did, kind,
+role). Four kinds, all data:
+
+| Kind | Shape | When it runs | On failure |
+| --- | --- | --- | --- |
+| Validation | `when: type == 'task'`, `assert: has(props.due) \|\| props.status != 'in_progress'` | inside the write transaction, on the post-write state | write rejected with `SchemaViolation` naming the rule and the property |
+| Transition | for a select or status property: `from: ['todo']`, `to: ['in_progress','canceled']`, `guard: has(props.assignee) && principal.role in ['editor','admin']`, `require: ['due']` | inside the write transaction, when the property changes | `FailedPrecondition` with the allowed transitions, so the UI can show them |
+| Derivation | `props.overdue = has(props.due) && props.due < now && props.status != 'done'` | at query time (compiled to SQL) or materialized by the indexer when the expression depends only on the block | never fails; a type error is caught at save time |
+| Reaction | `on: change('status')`, `when: props.status == 'done'`, `do: [set('completed_at', now), add_edge('done_by', me())]` | by the worker after commit, as the automation principal | logged and retried; loops are cut by a depth limit |
+
+Actions in reactions are a closed set: set or unset a property, add or remove
+an edge, set the type, move, append a block from a template, publish,
+notify. External webhooks stay R2 as the specification says.
+
+**Resolution semantics.** One deterministic pipeline per structured write:
+apply the mutation in a Loro transaction, evaluate derivations the rules
+need, evaluate validation and transition rules in declared order (every
+failure is reported with its path; the write commits only if none fails),
+commit, enqueue reactions. Rules run under the per-doc advisory lock on the
+freshest state the node has, so two concurrent writers cannot both pass a
+guard that only one may pass.
+
+**Governed properties and collaborative edits.** A CRDT edit cannot be
+refused after the fact without diverging clients, so a property definition
+can be marked *governed*. Governed properties are written only through
+`BlocksService.SetProperties` (the property panel and the slash commands call
+it; the Native and Source lenses show them read-only inline), which is the
+strict path above. Ungoverned properties may be typed inline as `key::
+value`; the indexer validates them, sets `compliant = false` with
+`invalid_props` when a rule fails (fields the Block message already has), and
+emits `rule.violated` so a view or an agent can act. Authorization conditions
+in the scheme (`not_closed` today) are the fifth place CEL runs and stay
+where they are.
+
+**Tests.** Property-based tests on the evaluator (a rule set and a random
+write sequence never leave a block in a state a validation forbids),
+differential tests for derivations between SQL and in-process evaluation,
+fixtures per rule kind, and an isolation test that a reaction never writes
+outside its project.
+
+### 6.6 Sequencing and size
+
+| Track | Weeks | Depends on |
+| --- | --- | --- |
+| Platform M4 to M14 | 21 | as planned |
+| UI-0 shadcn foundation and Tauri shell | 2 | none |
+| E1 editing surface | 3 | M4 |
+| K1 subdocs, transclusion, reference panels | 3 | M4, M5 |
+| K2 Logseq completeness | 4 | K1, M9 |
+| K3 databases and views | 6 | M9 |
+| K4 organization and cross-workspace references | 3 | M6, M9 |
+| K5 permissions surface | 2 | M6, M10 |
+| K6 importers | 3 | M11 |
+| K7 graph view and sidebar panes | 1 | K1 |
+| R1 rules engine (validation, transitions, derivations, reactions) | 3 | M5, M9 |
+| K8 comments and notifications (v1.1) | 2 | M5 |
+
+About 53 engineer-weeks by the specification's estimating style; platform,
+editor and knowledge tracks run in parallel. The order that shows value
+earliest: UI-0, M4, E1, K1, M5, M6, K5, M9, K3, R1, K2, K4, M10, M11 with K6,
+M12, K7, M13, M14.
+
+---
+
+## 7. The remaining milestones
 
 Each section gives the goal, what already exists, the design that should be
 followed, the interfaces to produce, the tests that define done, and the
@@ -998,7 +1247,7 @@ and complete the documentation.
 
 ---
 
-## 7. Engineering rules that keep the system honest
+## 8. Engineering rules that keep the system honest
 
 These are conventions the existing code follows; new code should too.
 
@@ -1031,7 +1280,7 @@ These are conventions the existing code follows; new code should too.
 
 ---
 
-## 8. Known gaps, open decisions and risks
+## 9. Known gaps, open decisions and risks
 
 Open decisions carried from §14: contract-wallet support without an RPC
 URL (currently refused), audit retention default (forever vs one year with
@@ -1059,7 +1308,7 @@ production install).
 
 ---
 
-## 9. A reading plan for the first week
+## 10. A reading plan for the first week
 
 1. Run it: `docs/running-locally.md`, then create a workspace and a page,
    open it in two tabs. Read `cmd/kb/main.go` and `internal/app/wire.go`
