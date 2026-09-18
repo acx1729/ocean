@@ -3,7 +3,15 @@ import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["src/gen/**", "node_modules/**", "playwright-report/**", "test-results/**", "../internal/web/dist/**"] },
+  {
+    ignores: [
+      "src/gen/**",
+      "node_modules/**",
+      "playwright-report/**",
+      "test-results/**",
+      "../internal/web/dist/**",
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -18,7 +26,9 @@ export default tseslint.config(
   },
   {
     files: ["scripts/**", "e2e/**"],
-    languageOptions: { globals: { process: "readonly", console: "readonly", URL: "readonly", setTimeout: "readonly" } },
+    languageOptions: {
+      globals: { process: "readonly", console: "readonly", URL: "readonly", setTimeout: "readonly" },
+    },
     rules: { "no-console": "off" },
   },
 );
