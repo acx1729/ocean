@@ -20,6 +20,7 @@ import (
 	"github.com/acx1729/ocean/internal/db"
 	"github.com/acx1729/ocean/internal/keyring"
 	"github.com/acx1729/ocean/internal/server"
+	kbsync "github.com/acx1729/ocean/internal/sync"
 	"github.com/acx1729/ocean/internal/telemetry"
 	"github.com/acx1729/ocean/internal/truth"
 	"github.com/acx1729/ocean/internal/version"
@@ -45,6 +46,7 @@ type App struct {
 	guard         authz.Guard
 	truth         *truth.Store
 	mat           *truth.Materializer
+	hub           *kbsync.Hub
 }
 
 // New opens the dependencies and builds the handler. It does not listen.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -372,35 +373,35 @@ func TestEndToEndPagesAndBlocks(t *testing.T) {
 			return err
 		}
 		if n != 4 || depth != 2 { // page block + heading + two paragraphs after the restore
-			t.Fatalf("blocks projection: n=%d depth=%d", n, depth)
+			return fmt.Errorf("blocks projection: n=%d depth=%d", n, depth)
 		}
 		var val string
 		if err := tx.QueryRow(ctx, `SELECT value_text FROM block_properties WHERE workspace_id = $1 AND block_id = $2 AND property_id = $3`, ws, task.Page.Id, status.Id).Scan(&val); err != nil {
 			return err
 		}
 		if val != "open" {
-			t.Fatalf("status projection: %q", val)
+			return fmt.Errorf("status projection: %q", val)
 		}
 		var key string
 		if err := tx.QueryRow(ctx, `SELECT key FROM blocks WHERE workspace_id = $1 AND id = $2`, ws, task.Page.Id).Scan(&key); err != nil {
 			return err
 		}
 		if key != "MAIN-2" {
-			t.Fatalf("key projection: %q", key)
+			return fmt.Errorf("key projection: %q", key)
 		}
 		var title string
 		if err := tx.QueryRow(ctx, `SELECT title FROM pages WHERE workspace_id = $1 AND id = $2`, ws, task.Page.Id).Scan(&title); err != nil {
 			return err
 		}
 		if title != "Fix login" {
-			t.Fatalf("pages projection: %q", title)
+			return fmt.Errorf("pages projection: %q", title)
 		}
 		var entries int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE workspace_id = $1`, ws).Scan(&entries); err != nil {
 			return err
 		}
 		if entries < 10 {
-			t.Fatalf("audit entries: %d", entries)
+			return fmt.Errorf("audit entries: %d", entries)
 		}
 		return nil
 	})

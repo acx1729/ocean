@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -58,14 +60,14 @@ func TestBoundariesSplitAndMerge(t *testing.T) {
 			return err
 		}
 		if n != 3 || depth != 3 {
-			t.Fatalf("boundary projection: n=%d depth=%d", n, depth)
+			return fmt.Errorf("boundary projection: n=%d depth=%d", n, depth)
 		}
 		var hasACL bool
 		if err := tx.QueryRow(ctx, `SELECT has_acl FROM blocks WHERE workspace_id = $1 AND id = $2`, ws, secret.Id).Scan(&hasACL); err != nil {
 			return err
 		}
 		if !hasACL {
-			t.Fatal("boundary root must be flagged has_acl")
+			return errors.New("boundary root must be flagged has_acl")
 		}
 		return nil
 	})
@@ -84,7 +86,7 @@ func TestBoundariesSplitAndMerge(t *testing.T) {
 			return err
 		}
 		if n != 0 {
-			t.Fatal("boundary doc must be purged after unrestrict")
+			return errors.New("boundary doc must be purged after unrestrict")
 		}
 		return tx.QueryRow(ctx, `SELECT count(*) FROM blocks WHERE workspace_id = $1 AND page_id = $2 AND doc_id = $3`, ws, page.Page.Id, page.Page.DocId).Scan(&n)
 	})
@@ -104,14 +106,14 @@ func TestBoundariesSplitAndMerge(t *testing.T) {
 			return err
 		}
 		if !deleted {
-			t.Fatal("boundary doc must be trashed with its portal")
+			return errors.New("boundary doc must be trashed with its portal")
 		}
 		var n int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM blocks WHERE workspace_id = $1 AND doc_id = $2`, ws, r2.DocId).Scan(&n); err != nil {
 			return err
 		}
 		if n != 0 {
-			t.Fatalf("boundary rows left behind: %d", n)
+			return fmt.Errorf("boundary rows left behind: %d", n)
 		}
 		return nil
 	})

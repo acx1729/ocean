@@ -117,18 +117,22 @@ func IndexDoc(ctx context.Context, tx pgx.Tx, in Input) error {
 			return err
 		}
 	}
-	// Root path: page docs hang blocks under the page block; boundaries under their portal.
+	// Root path: page docs hang blocks under the page block. A boundary doc's
+	// root IS the portal block, so its rows continue from the portal's parent.
 	rootPath := labelOf(in.PageID)
 	rootParent := in.PageID
+	baseDepth := 1
 	if in.PortalBlockID != "" {
-		var portalPath string
-		err := tx.QueryRow(ctx, `SELECT wbs_path::text FROM blocks WHERE workspace_id = $1 AND id = $2`, in.WorkspaceID, in.PortalBlockID).Scan(&portalPath)
-		if err == nil {
-			rootPath = portalPath
+		var portalPath, portalParent string
+		var portalDepth int
+		err := tx.QueryRow(ctx, `SELECT wbs_path::text, COALESCE(parent_block_id::text, ''), depth FROM blocks WHERE workspace_id = $1 AND id = $2`, in.WorkspaceID, in.PortalBlockID).Scan(&portalPath, &portalParent, &portalDepth)
+		if err == nil && strings.Contains(portalPath, ".") {
+			rootPath = portalPath[:strings.LastIndex(portalPath, ".")]
+			rootParent = portalParent
+			baseDepth = portalDepth
 		} else {
-			rootPath = labelOf(in.PageID) + "." + labelOf(in.PortalBlockID)
+			rootParent = in.PageID
 		}
-		rootParent = in.PortalBlockID
 	}
 
 	type row struct {
@@ -194,7 +198,6 @@ func IndexDoc(ctx context.Context, tx pgx.Tx, in Input) error {
 			walk(ch, n.ID, path, depth+1)
 		}
 	}
-	baseDepth := strings.Count(rootPath, ".") + 1
 	for _, root := range st.Roots {
 		walk(root, rootParent, rootPath, baseDepth)
 	}
